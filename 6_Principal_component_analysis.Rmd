@@ -1,0 +1,115 @@
+---
+title: "Principal component analysis"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+# Load packages and data
+```{r}
+library(scTools)
+library(dplyr)
+library(scater)
+options(stringsAsFactors = FALSE)
+
+reads_qc <- readRDS("data/6moWTB_reads_qc.rds")
+endog_genes <- !rowData(reads_qc)$is_feature_control
+erccs <- rowData(reads_qc)$is_feature_control
+
+qclust <- quickCluster(reads_qc, min.size = 20)
+reads_qc <- computeSumFactors(reads_qc, clusters = qclust)
+reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
+summary(sizeFactors(reads_qc))
+reads_qc <- normalize(reads_qc)
+```
+
+# Find and extract principal components
+## Find components with biological information
+```{r}
+plotQC(camps, type = "find-pcs", variable = "total_counts", exprs_values = "logcounts")
+plotQC(camps, type = "find-pcs", variable = "total_features", exprs_values = "logcounts")
+plotQC(camps, type = "find-pcs", variable = "batch", exprs_values = "logcounts")
+plotQC(camps, type = "find-pcs", variable = "cell_type", exprs_values = "logcounts")
+plotQC(camps, type = "find-pcs", variable = "genotype", exprs_values = "logcounts")
+```
+
+## Plot PCA
+```{r fig.height=15, fig.width=15}
+## PCA with different components
+plotPCA(camps, exprs_values = "logcounts", ncomponents = 4, colour_by = "cell_type", theme = 14) 
+plotPCA(camps, exprs_values = "logcounts", ncomponents = 4, colour_by = "genotype", theme = 14) 
+plotPCA(camps, exprs_values = "logcounts", ncomponents = 4, colour_by = "batch", theme = 14)
+```
+
+## Extract components
+```{r, fig.height=6, fig.width=7}
+(camps=plotPCA(camps, exprs_values = "logcounts", ntop=500, colour_by = "cell_type",  ncomponents=4, theme_size =10, return_SCE = TRUE))
+camps$PC1 <- reducedDim(camps)[,1]
+camps$PC2 <- reducedDim(camps)[,2]
+camps$PC3 <- reducedDim(camps)[,3]
+camps$PC4 <- reducedDim(camps)[,4]
+```
+
+# Plot genes
+## Plot annotation on different principal components
+Make dataframe with components of interest
+```{r}
+pcs <- data.frame(x = c("PC1", "PC1", "PC1", "PC2", "PC2", "PC3"), 
+                  y = c("PC2", "PC3", "PC4", "PC3", "PC4", "PC4"), 
+                  stringsAsFactors = FALSE)
+```
+
+Plot and save principal components 1-4 and group by cell type
+```{r}
+for(i in 1:6) {
+  plot_components(camps, pcs[i, 1], pcs[i, 2], group = "cell_type", palette = 2, folder = "annotation", subfolder = "cell_type")
+}
+```
+
+## Plot and save selection of genes over principal components 1-4
+Make Geneplots folder and subplots with names of the markers you want to check. Put those markers in a vector and run this vector through 2 for loops. The first loops through your vector with gene names (use the official namens on Ensembl or any other database that you use). The second runs the plot components function while looping though your pcs list.
+
+We use the plot_components function from scTools again but here we put gene = TRUE to plot expression of genes.
+
+
+Add directory to Plots folder that gets the name of the vector
+```{r}
+facs_markers <- c("Itga7", "Ly6a", "Alpl")
+for(g in facs_markers) {
+  if(g %in% row.names(camps)){
+    for (i in 1:6) {
+      plot_components(camps, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "facs_markers", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+```
+
+# Principal component gene weights
+
+Extract genes from different principal components to check for biological processes that are defined in principal components. Done in two steps: 
+1. Extracting gene weights from sce_object
+2. Saving weights with genes in ascending order per principal component
+
+Extract gene weight for all principal components
+```{r}
+extract_PC_gene_weights <- function(sce_object, ntop = 500, file_name = "PCA_gene_weights.xlsx") {
+rv <- rowVars(assay(sce_object))
+selected_genes <- order(rv, decreasing = TRUE)[seq_len(min(ntop, length(rv)))]
+pca <- prcomp(t(assay(sce_object)[selected_genes,]))
+pca_loadings <- as.data.frame(pca$rotation)
+pca_loadings[order(pca_loadings[,1], decreasing = TRUE),]
+write.xlsx(pca_loadings, file_name)
+}
+```
+
+```{r}
+extract_PC_gene_weights(camps)
+```
+
+Save every principal component in a seperate data frame with gene name and weight in decreasing order by use of save_PC_weights function of scTools package.
+```{r}
+components <- c("PC1", "PC2", "PC3", "PC4")
+for (x in components) {
+  save_PC_weights(pca_loadings, x)
+}
+```

@@ -1,0 +1,158 @@
+---
+title: "Clustering with SC3"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+# Load libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(knitr)
+library(SC3)
+library(scater)
+library(RColorBrewer)
+library(viridis)
+library(SingleCellExperiment)
+library(grid)
+library(BiocGenerics)
+library(xlsx)
+library(scTools)
+options(stringsAsFactors = FALSE)
+```
+
+# Import dataset
+```{r}
+set.seed(1234567)
+camps <- readRDS("data/6moWTB_scran_PCS.rds")
+#endog_genes <- !rowData(camps)$is_feature_control
+#camps <- camps[endog_genes, ]
+#rowData(camps)$feature_symbol <- rownames(camps)
+#camps <- camps[!duplicated(rownames(camps)), ]
+```
+
+
+# Clustering
+## SC3
+```{r, message = FALSE, warning=FALSE}
+camps <- sc3_prepare(camps)
+camps <- sc3_estimate_k(camps)
+metadata(camps)$sc3$k_estimation
+camps <- sc3(camps, ks = 2:6, biology = TRUE, n_cores = 1)
+```
+
+### SC3 interactive
+Check dataset interactively online
+```{r}
+#sc3_interactive(camps)
+```
+
+### Export results to excel
+```{r}
+sc3_export_results_xls(camps, "6moWTB_sc3.xls")
+```
+
+### Plot clusters on PC1-4
+Create dataframe of principal components to use
+```{r}
+pcs <- data.frame(x = c("PC1", "PC1", "PC1", "PC2", "PC2", "PC3"), 
+                  y = c("PC2", "PC3", "PC4", "PC3", "PC4", "PC4"), 
+                  stringsAsFactors = FALSE)
+```
+
+Plot clusters over all selected PCs
+```{r}
+clusters <- c("sc3_2_clusters", "sc3_3_clusters", "sc3_4_clusters", "sc3_5_clusters", "sc3_6_clusters")
+if (dir.exists(paste("sc3/", "k5", sep = "")) == FALSE)  {
+  dir.create(paste("sc3/", "k5", sep =""))
+}
+for (k in clusters) {
+  for (i in 1:nrow(pcs)) {
+  camps[[k]] <- factor(camps[[k]])
+  plot_components(camps, pcs[i, 1], pcs[i, 2], group = k, palette = 3, folder = "sc3", subfolder = "k5", width = 14, height = 12)
+  }
+}
+```
+
+### Differentially expressed genes
+Export all differentially expressed genes to sce_object
+```{r}
+sc3_plot_de_genes(camps, k = 5, show_pdata = )
+```
+
+Export excel with significant DE genes
+```{r}
+de_genes <- rowData(camps)
+de_order <- order(de_genes$sc3_5_de_padj, na.last = TRUE)
+de_genes <- de_genes[order(de_genes$sc3_5_de_padj, na.last = TRUE),]
+de_genes <- de_genes[!is.na(de_genes$sc3_5_de_padj), ]
+de_genes <- de_genes[de_genes$sc3_5_de_padj < 0.01, ]
+de_genes <- de_genes[, c("mgi_symbol", "sc3_5_markers_auroc", "sc3_5_markers_clusts", "sc3_5_de_padj")]
+write.xlsx(de_genes, "6moWTB_de_genes.xlsx")
+```
+
+Plot DE genes on PCA
+```{r}
+de_k5 <- de_genes$mgi_symbol
+if (dir.exists(paste("sc3/", "de_k5", sep = "")) == FALSE)  {
+  dir.create(paste("sc3/", "de_k5", sep =""))
+}
+for(g in de_k5) {
+  if(g %in% row.names(camps)){
+      for (i in 1:6) {
+      plot_components(camps, pcs[i, 1], pcs[i, 2], group = g, folder = "sc3", subfolder = "de_k5", gene = TRUE)
+    }
+  }
+}
+```
+
+Plot heatmap of DE genes with SC3
+```{r}
+library(grid)
+plot_list = list()
+for (x in c(2:6)) {
+p <- sc3_plot_de_genes(camps, k = x, show_pdata = c("cell_type", "genotype", "total_features"))
+plot_list[[x-1]] <- p
+}
+for (i in 1:5) {
+  save_pheatmap_tiff(plot_list[[i]], paste("SC3/DE_k=",i+1,".tiff", sep = ""), 20, 20)
+}
+```
+
+### Markers
+Export marker genes to sce_object
+```{r}
+sc3_plot_markers(camps, k = 5, show_pdata = )
+```
+
+
+Get excel with significant marker genes
+```{r}
+markers <- rowData(camps)
+#markers <- order(markers$sc3_5_markers_padj, na.last = TRUE)
+markers <- markers[order(markers$sc3_5_markers_padj, na.last = TRUE),]
+markers <- markers[!is.na(markers$sc3_5_markers_padj), ]
+markers <- markers[markers$sc3_5_markers_padj < 0.01, ]
+markers <- markers[, c("mgi_symbol", "sc3_5_markers_auroc", "sc3_5_markers_clusts", "sc3_5_markers_padj")]
+write.xlsx(markers, "6moWTB_marker_genes.xlsx")
+```
+
+Plot marker genes with SC3
+```{r, fig.height=10, fig.width=15}
+options(error=recover)
+ks <- 2:6
+plot_list = list()
+for (i in seq_along(ks)) {
+p <- sc3_plot_markers(camps, k = ks[i], show_pdata = c("cell_type", "genotype", "total_features"))
+plot_list[[i]] <- p
+}
+for (i in 1:5) {
+  save_pheatmap_tiff(plot_list[[i]], paste("SC3/markers_k=",i+1,".tiff", sep = ""), width = 20, height = 20)
+}
+```
+
+
+## Save RDS
+```{r}
+saveRDS(camps, file = "Data/6moWTB_reads_qc_scran_SC3.rds")
+```
