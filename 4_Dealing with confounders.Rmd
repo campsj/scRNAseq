@@ -1,0 +1,169 @@
+---
+title: "Dealing with confounders"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+# Load packages, data and normalize
+```{r message=FALSE, warning=FALSE}
+library(scRNA.seq.funcs)
+library(RUVSeq)
+library(scater)
+library(SingleCellExperiment)
+library(scran)
+library(kBET)
+library(sva) # Combat
+library(edgeR)
+set.seed(1234567)
+options(stringsAsFactors = FALSE)
+
+reads_qc <- readRDS("data/6moWTB_reads_qc.rds")
+endog_genes <- !rowData(reads_qc)$is_feature_control
+erccs <- rowData(reads_qc)$is_feature_control
+
+qclust <- quickCluster(reads_qc, min.size = 20)
+reads_qc <- computeSumFactors(reads_qc, clusters = qclust)
+reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
+summary(sizeFactors(reads_qc))
+reads_qc <- normalize(reads_qc)
+```
+
+## RUVg
+```{r}
+ruvg <- RUVg(counts(reads_qc), erccs, k = 1)
+assay(reads_qc, "ruvg1") <- log2(
+    t(t(ruvg$normalizedCounts) / colSums(ruvg$normalizedCounts) * 1e6) + 1
+)
+ruvg <- RUVg(counts(reads_qc), erccs, k = 10)
+assay(reads_qc, "ruvg10") <- log2(
+    t(t(ruvg$normalizedCounts) / colSums(ruvg$normalizedCounts) * 1e6) + 1
+)
+```
+
+## RUVs
+```{r}
+scIdx <- matrix(-1, ncol = max(table(reads_qc$individual)), nrow = 4)
+tmp <- which(reads_qc$batch == 1)
+scIdx[1, 1:length(tmp)] <- tmp
+tmp <- which(reads_qc$batch == 2)
+scIdx[2, 1:length(tmp)] <- tmp
+tmp <- which(reads_qc$batch == 3)
+scIdx[3, 1:length(tmp)] <- tmp
+tmp <- which(reads_qc$batch == 4)
+scIdx[4, 1:length(tmp)] <- tmp
+cIdx <- rownames(reads_qc)
+ruvs <- RUVs(counts(reads_qc), cIdx, k = 1, scIdx = scIdx, isLog = FALSE)
+assay(reads_qc, "ruvs1") <- log2(
+    t(t(ruvs$normalizedCounts) / colSums(ruvs$normalizedCounts) * 1e6) + 1
+)
+ruvs <- RUVs(counts(reads_qc), cIdx, k = 10, scIdx = scIdx, isLog = FALSE)
+assay(reads_qc, "ruvs10") <- log2(
+    t(t(ruvs$normalizedCounts) / colSums(ruvs$normalizedCounts) * 1e6) + 1
+)
+```
+
+## Combat
+```{r}
+combat_data <- logcounts(reads_qc)
+mod_data <- as.data.frame(t(combat_data))
+# Basic batch removal
+mod0 = model.matrix(~ 1, data = mod_data) 
+# Preserve biological variability
+mod1 = model.matrix(~ reads_qc$genotype, data = mod_data) 
+# adjust for total genes detected
+mod2 = model.matrix(~ reads_qc$total_features, data = mod_data)
+assay(reads_qc, "combat") <- ComBat(
+    dat = t(mod_data), 
+    batch = factor(reads_qc$batch), 
+    mod = mod0,
+    par.prior = TRUE,
+    prior.plots = FALSE
+)
+```
+
+## mnnCorrect
+Doesn't work because of different dims per batch
+```{r}
+# For a balanced design: 
+B1 <- logcounts(reads_qc[, reads_qc$batch == 1])
+B2 <- logcounts(reads_qc[, reads_qc$batch == 2])
+B3 <- logcounts(reads_qc[, reads_qc$batch == 3])
+B4 <- logcounts(reads_qc[, reads_qc$batch == 4])
+#assay(reads_qc, "mnn") <- mnnCorrect(
+#    B1, B2, B3, B4,  
+#    k = 20,
+#    sigma = 0.1,
+#    cos.norm.in = TRUE,
+#    cos.norm.out = TRUE,
+#   svd.dim = 2
+#)
+```
+
+## GLM
+Problems with apply
+```{r}
+glm_fun <- function(g, batch) {
+  model <- glm(g ~ batch)
+  model$coef[1] <- 0 # replace intercept with 0 to preserve reference batch.
+  return(model$coef)
+}
+effects <- apply(
+    logcounts(reads_qc), 
+    1, 
+    glm_fun, 
+    batch = reads_qc$batch
+)
+#corrected <- logcounts(reads_qc) - t(effects[as.numeric(factor(reads_qc$batch)), ])
+#assay(reads_qc, "glm") <- corrected
+```
+
+# Evaluate
+## Effectiveness 1
+```{r}
+for(n in assayNames(reads_qc)) {
+    print(
+        plotPCA(
+            reads_qc[endog_genes, ],
+            colour_by = "batch",
+            size_by = "total_features",
+            exprs_values = n
+        ) +
+        ggtitle(n)
+    )
+}
+```
+
+## Effectiveness 2
+```{r}
+res <- list()
+for(n in assayNames(reads_qc)) {
+    res[[n]] <- suppressWarnings(calc_cell_RLE(assay(reads_qc, n), erccs))
+}
+par(mar=c(6,4,1,1))
+boxplot(res, las=2)
+```
+
+## Effectiveness 3
+```{r}
+for(n in assayNames(reads_qc)) {
+    print(
+        plotQC(
+            reads_qc[endog_genes, ],
+            type = "expl",
+            exprs_values = n,
+            variables = c(
+                "total_features",
+                "total_counts",
+                "batch",
+                "pct_counts_ERCC",
+                "pct_counts_MT",
+                "genotype",
+                "cell_type"
+            )
+        ) +
+        ggtitle(n)
+    )
+}
+```
+

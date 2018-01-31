@@ -1,0 +1,317 @@
+---
+title: "Quality control"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(scater)
+library(knitr)
+library(SingleCellExperiment)
+library(magrittr)
+options(stringsAsFactors = FALSE)
+```
+
+# Prepare dataset
+## Load counts and annotation file
+```{r}
+reads <- read.csv("data/htseq_counts_all.csv")
+rownames(reads) <- reads[, 1]
+reads <- reads[, -1]
+anno <- read.csv("data/annotation.csv", header = TRUE)
+i5 <- read.csv("data/i5_indexes.csv", header = TRUE)
+i7 <- read.csv("data/i7_indexes.csv", header = TRUE)
+anno <- anno %>% 
+  merge(i7, by = "i7_index") %>%
+  merge(i5, by = "i5_index")
+anno$sample_id <- paste(anno$i7_base, ".", anno$i5_base)
+anno <- anno[order(anno$sample_id),] #order according to sample_id
+```
+
+### Inspect expression matrix
+```{r}
+knitr::kable(
+    head(reads[ , 1:3]), booktabs = TRUE,
+    caption = 'A table of the first 6 rows and 3 columns of the molecules table.'
+)
+```
+
+### Inspect annotation matrix
+```{r}
+knitr::kable(
+    head(anno), booktabs = TRUE,
+    caption = 'A table of the first 6 rows of the anno table.'
+)
+```
+
+### Create SingleCellExperiment object
+```{r}
+reads <- SingleCellExperiment(assays = list(counts = as.matrix(reads)), 
+                              colData = anno)
+```
+
+### Remove genes
+```{r}
+keep_feature <- rowSums(counts(reads) > 0) > 0
+reads <- reads[keep_feature, ]
+```
+
+### Define mtDNA and ERCC
+```{r}
+isSpike(reads, "ERCC") <- grepl("^ERCC-", rownames(reads))
+isSpike(reads, "MT") <- rownames(reads) %in% 
+  c("ENSMUSG00000064336", "ENSMUSG00000064337", "ENSMUSG00000064338",
+    "ENSMUSG00000064339", "ENSMUSG00000064340", "ENSMUSG00000064341",
+    "ENSMUSG00000064342", "ENSMUSG00000064343", "ENSMUSG00000064344",
+    "ENSMUSG00000064345", "ENSMUSG00000064346", "ENSMUSG00000064347", 
+    "ENSMUSG00000064348", "ENSMUSG00000064349", "ENSMUSG00000064350",
+    "ENSMUSG00000064351", "ENSMUSG00000064352", "ENSMUSG00000064353",
+    "ENSMUSG00000064354", "ENSMUSG00000064355", "ENSMUSG00000064356",
+    "ENSMUSG00000064357", "ENSMUSG00000064358", "ENSMUSG00000064359",
+    "ENSMUSG00000064360", "ENSMUSG00000064361", "ENSMUSG00000065947",
+    "ENSMUSG00000064363", "ENSMUSG00000064364", "ENSMUSG00000064365",
+    "ENSMUSG00000064366", "ENSMUSG00000064367", "ENSMUSG00000064368",
+    "ENSMUSG00000064369", "ENSMUSG00000064370", "ENSMUSG00000064371",
+    "ENSMUSG00000064372")
+
+reads <- calculateQCMetrics(reads,
+  feature_controls = list(ERCC = isSpike(reads, "ERCC"), MT = isSpike(reads, "MT"))
+)
+```
+
+### Annotate genes
+```{r}
+reads <- getBMFeatureAnnos(
+  reads,
+  filters = "ensembl_gene_id",
+  attributes = c(
+    "ensembl_gene_id",
+    "mgi_symbol",
+    "chromosome_name",
+    "transcript_biotype",
+    "transcript_start",
+    "transcript_end",
+    "transcript_count"),
+  feature_symbol = "mgi_symbol",
+  feature_id = "ensembl_gene_id",
+  biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "mmusculus_gene_ensembl",
+  host = "www.ensembl.org"
+)
+rownames(reads) <- make.names(rowData(reads)$mgi_symbol, unique = TRUE)
+rownames(reads) <- gsub("NA", "ERCC", rownames(reads))
+```
+
+# Cell quality control
+## Total counts per cell
+```{r, fig.height=4.5, fig.width=6}
+hist(
+  reads$total_counts,
+  breaks = 50,
+  main = "Reads per cell",
+  xlab = "Total Reads"
+)
+abline(v = 1e5, col = "red")
+
+filter_by_total_counts <- (reads$total_counts > 1e5)
+
+knitr::kable(
+  as.data.frame(table(filter_by_total_counts)),
+  booktabs = TRUE,
+  row.names = FALSE,
+  caption = 'The number of cells removed by total counts filter (FALSE)'
+)
+```
+
+
+## Detected genes per cell
+```{r, fig.height=4.5, fig.width=6}
+hist(
+  reads$total_features,
+  breaks = 50,
+  main = "Detected genes per cell",
+  xlab = "Total genes"
+)
+abline(v = c(700), col = "red")
+
+filter_by_expr_features <- (reads$total_features > 700)
+
+knitr::kable(
+  as.data.frame(table(filter_by_expr_features)),
+  booktabs = TRUE,
+  row.names = FALSE,
+  caption = 'The number of cells removed by total features filter (FALSE)'
+)
+```
+
+## mtDNA
+```{r, fig.height=4.5, fig.width=6}
+plotPhenoData(
+  reads,
+  aes_string(x = "total_features",
+             y = "pct_counts_MT",
+             colour = "batch", alpha = 0.8, size = 1), theme = 12) +
+  geom_hline(yintercept = 10, col = "red") +
+  labs(x = "Total genes", y = "Percentage mitochondrial genes")
+
+filter_by_MT <- reads$pct_counts_MT < 10
+knitr::kable(
+  as.data.frame(table(filter_by_MT)),
+  booktabs = TRUE,
+  row.names = FALSE,
+  caption = 'The number of cells removed by MT filter (FALSE)'
+)
+```
+
+
+## ERCC
+```{r}
+plotPhenoData(
+  reads,
+  aes_string(x = "total_features",
+             y = "pct_counts_ERCC",
+             colour = "cell_type", alpha = 0.9, size = 1), theme = 12) +
+  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3) + 
+  geom_hline(yintercept = c(1, 20), col = "red") +
+  labs(x = "Total genes", y = "Percentage ERCC") 
+
+filter_by_ERCC <- (reads$pct_counts_ERCC < 20 & reads$pct_counts_ERCC > 1)
+
+knitr::kable(
+  as.data.frame(table(filter_by_ERCC)),
+  booktabs = TRUE,
+  row.names = FALSE,
+  caption = 'The number of cells removed by ERCC filter (FALSE)'
+)
+```
+
+
+# Cell filtering
+## Manual filter
+```{r}
+reads$use <- (
+  # sufficient features (genes)
+  filter_by_expr_features &
+    # sufficient molecules counted
+    filter_by_total_counts &
+    # sufficient endogenous RNA
+    filter_by_ERCC &
+    # remove cells with unusual number of reads in MT genes
+    filter_by_MT
+)
+table(reads$use)
+```
+
+## Automatic filter
+```{r}
+reads <- plotPCA(
+    reads,
+    size_by = "total_features", 
+    shape_by = "use",
+    pca_data_input = "pdata",
+    detect_outliers = TRUE,
+    return_SCE = TRUE
+)
+table(reads$outlier)
+```
+
+# Gene analysis
+## Gene expression
+```{r, fig.height=8, fig.width=5}
+plotQC(reads, type = "highest-expression")
+```
+
+## Gene filtering
+```{r}
+filter_genes <- apply(counts(reads[, colData(reads)$use]), 1, 
+                      function(x) length(x[x > 1]) >= 2)
+rowData(reads)$use <- filter_genes
+
+knitr::kable(
+  as.data.frame(table(filter_genes)),
+  booktabs = TRUE,
+  row.names = FALSE,
+  caption = 'The number of genes removed by gene filter (FALSE)'
+)
+```
+
+# Save the data
+## Genes and cells after QC
+```{r}
+dim(reads[rowData(reads)$use, colData(reads)$use])
+```
+
+## Calculate raw logcounts
+```{r, fig.width=5.5, fig.height=4}
+assay(reads, "logcounts_raw") <- log2(counts(reads) + 1)
+reducedDim(reads) <- NULL
+```
+
+## Remove bad quality libraries
+```{r}
+reads_qc <- reads[rowData(reads)$use, colData(reads)$use]
+```
+
+## Save to RDS file
+```{r}
+saveRDS(reads, file ="data/6moWTB_reads.rds")
+saveRDS(reads_qc, file = "data/6moWTB_reads_qc.rds")
+```
+
+# Visualization
+PCA and tSNE of cells before and after QC.
+```{r}
+reads_qc <- reads[rowData(reads)$use, colData(reads)$use]
+endog_genes <- !rowData(reads_qc)$is_feature_control
+```
+
+## PCA
+```{r, fig.width=11, fig.height=4}
+pca1 <- plotPCA(reads[endog_genes, ],
+                colour_by = "batch",
+                size_by = "total_features",
+                shape_by = "individual",
+                exprs_values = "logcounts_raw",
+                theme=12) #+
+  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+pca2 <- plotPCA(reads_qc[endog_genes, ],
+                colour_by = "batch",
+                size_by = "total_features",
+                shape_by = "individual",
+                exprs_values = "logcounts_raw",
+                theme=12) #+
+  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+multiplot(pca1, pca2, cols = 2)
+```
+
+
+## tSNE
+```{r, fig.width=14, fig.height=4}
+tsne1 <- plotTSNE(reads[endog_genes, ],
+                 perplexity = 2,
+                 colour_by = "batch",
+                 size_by = "total_features",
+                 shape_by = "individual",
+                 exprs_values = "logcounts_raw",
+                 rand_seed = 123456) #+
+  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+tsne2 <- plotTSNE(reads_qc[endog_genes, ],
+                 perplexity = 2,
+                 colour_by = "batch",
+                 size_by = "total_features",
+                 shape_by = "individual",
+                 exprs_values = "logcounts_raw",
+                 rand_seed = 123456) #+
+  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+tsne3 <- plotTSNE(reads_qc[endog_genes, ],
+                 perplexity = 20,
+                 colour_by = "batch",
+                 size_by = "total_features",
+                 shape_by = "individual",
+                 exprs_values = "logcounts_raw",
+                 rand_seed = 123456) #+
+  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+multiplot(tsne1, tsne2, tsne3, cols = 3)
+```
+
