@@ -12,7 +12,7 @@ library(scater)
 library(scran)
 options(stringsAsFactors = FALSE)
 set.seed(1234567)
-reads_qc <- readRDS("data/6moWTB_reads.rds")
+reads_qc <- readRDS("data/1moWTB_reads.rds")
 endog_genes <- !rowData(reads_qc)$is_feature_control
 ```
 
@@ -24,7 +24,7 @@ plotPCA(
   colour_by = "batch",
   size_by = "total_features",
   shape_by = "individual",
-  exprs_values = "log2_counts"
+  exprs_values = "logcounts_raw"
 ) #+
   #scale_colour_brewer(name = "batch", type= "qual", palette = 3)
 ```
@@ -50,7 +50,7 @@ plotPCA(
 ```{r}
 plotRLE(
   reads_qc[endog_genes, ], 
-  exprs_mats = list(Raw = "log2_counts", CPM = "logcounts"),
+  exprs_mats = list(Raw = "logcounts_raw", CPM = "logcounts"),
   exprs_logged = c(TRUE, TRUE),
   colour_by = "batch",
   #style = "full",
@@ -80,7 +80,7 @@ plotPCA(
   colour_by = "batch",
   size_by = "total_features",
   shape_by = "individual",
-  exprs_values = "norm_cpm"
+  exprs_values = "logcounts"
 ) #+
   #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
 ```
@@ -89,16 +89,14 @@ plotPCA(
 ```{r}
 plotRLE(
   reads_qc[endog_genes, ], 
-  exprs_mats = list(Raw = "log2_counts", TMM = "norm_cpm"),
+  exprs_mats = list(Raw = "logcounts_raw", TMM = "logcounts"),
   exprs_logged = c(TRUE, TRUE),
   colour_by = "batch",
   #style = "full",
   outlier.alpha = .1,
   outlier.shape = 3,
   outlier.size = 0
-) + 
-  scale_colour_brewer(name = "Batch", type= "qual", palette = 3) +
-  scale_fill_brewer(name = "Batch", type= "qual", palette = 3)
+) 
 ```
 
 
@@ -106,12 +104,17 @@ plotRLE(
 ### Compute size factors for genes and spike-ins
 ```{r}
 #set_exprs(reads_qc, "log2_counts") <- exprs(reads_qc)
-qclust <- quickCluster(reads_qc, min.size = 35)
+qclust <- quickCluster(reads_qc, min.size = 25)
 reads_qc <- computeSumFactors(reads_qc, clusters = qclust)
 reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
 summary(sizeFactors(reads_qc))
 reads_qc <- normalize(reads_qc)
 ```
+
+```{r}
+saveRDS(reads_qc, "data/1moWTB_scran.rds")
+```
+
 
 ### Plot PCA
 ```{r}
@@ -130,16 +133,14 @@ plotPCA(
 ```{r}
 plotRLE(
   reads_qc[endog_genes, ], 
-  exprs_mats = list(Raw = "log2_counts", Scran = "logcounts"),
+  exprs_mats = list(Raw = "logcounts_raw", Scran = "logcounts"),
   exprs_logged = c(TRUE, TRUE),
   colour_by = "batch",
   #style = "full",
   outlier.alpha = .1,
   outlier.shape = 3,
   outlier.size = 0
-) +
-  scale_colour_brewer(name = "Batch", type= "qual", palette = 3) +
-  scale_fill_brewer(name = "Batch", type= "qual", palette = 3) 
+)
 ```
 
 
