@@ -16,7 +16,7 @@ library(viridis)
 library(SingleCellExperiment)
 library(grid)
 library(BiocGenerics)
-library(xlsx)
+#library(xlsx)
 library(scTools)
 options(stringsAsFactors = FALSE)
 ```
@@ -24,9 +24,10 @@ options(stringsAsFactors = FALSE)
 # Import dataset
 ```{r}
 set.seed(1234567)
-camps <- readRDS("data/6moWTB_scran_PCS.rds")
-#endog_genes <- !rowData(camps)$is_feature_control
-#camps <- camps[endog_genes, ]
+sce <- readRDS("data/1moWTB_scran.rds")
+endog_genes <- !rowData(sce)$is_feature_control
+sce <- sce[endog_genes, ]
+#sce <- sce[endog_genes, ]
 #rowData(camps)$feature_symbol <- rownames(camps)
 #camps <- camps[!duplicated(rownames(camps)), ]
 ```
@@ -35,25 +36,50 @@ camps <- readRDS("data/6moWTB_scran_PCS.rds")
 # Clustering
 ## SC3
 ```{r, message = FALSE, warning=FALSE}
-camps <- sc3_prepare(camps)
-camps <- sc3_estimate_k(camps)
-metadata(camps)$sc3$k_estimation
-camps <- sc3(camps, ks = 2:6, biology = TRUE, n_cores = 1)
+sce <- sc3_prepare(sce)
+sce <- sc3_estimate_k(sce)
+metadata(sce)$sc3$k_estimation
+sce <- sc3(sce, ks = 2:13, biology = TRUE, n_cores = 1)
 ```
 
 ### SC3 interactive
 Check dataset interactively online
-```{r}
-#sc3_interactive(camps)
+```{r eval=FALSE, include=FALSE}
+sc3_interactive(camps)
 ```
 
 ### Export results to excel
+**Install perl on your computer to use this function!**
 ```{r}
-sc3_export_results_xls(camps, "6moWTB_sc3.xls")
+sc3_export_results_xls(sce)
 ```
 
+## Check principal components to use
+```{r}
+variables <- c("total_features", "total_counts", "cell_type", "genotype")
+for (v in variables) {
+  print(
+    plotQC(sce, type = "find-pcs", variable = v) +
+      ggtitle(v)
+  )
+}
+```
+
+
+```{r fig.height=10, fig.width=10}
+variables <- c("cell_type", "genotype")
+for (v in variables) {
+  print(
+    plotPCA(sce, ncomponents = 10, colour_by = v) +
+    ggtitle(v)
+  )
+}
+```
+
+
 ### Plot clusters on PC1-4
-Create dataframe of principal components to use
+Create dataframe of principal components to use. 
+Select principal components that are important for you in **pcs dataframe**
 ```{r}
 pcs <- data.frame(x = c("PC1", "PC1", "PC1", "PC2", "PC2", "PC3"), 
                   y = c("PC2", "PC3", "PC4", "PC3", "PC4", "PC4"), 
