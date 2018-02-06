@@ -12,7 +12,7 @@ library(scater)
 library(scran)
 options(stringsAsFactors = FALSE)
 set.seed(1234567)
-reads_qc <- readRDS("data/1moWTB_reads.rds")
+reads_qc <- readRDS("data/1moWTB_reads_qc.rds")
 endog_genes <- !rowData(reads_qc)$is_feature_control
 ```
 
