@@ -16,11 +16,11 @@ library(viridis)
 library(SingleCellExperiment)
 library(grid)
 library(BiocGenerics)
-#library(xlsx)
 library(scTools)
 library(dplyr)
 library(lazyeval)
 library(tidyr)
+library(rlang)
 options(stringsAsFactors = FALSE)
 ```
 
@@ -77,6 +77,18 @@ for (i in k) {
 }
 ```
 
+Show heatmap of all selected ks 
+```{r fig.height=12, fig.width=10}
+for (k in 2:11) {
+    sc3_plot_markers(sce, k = k, auroc = 0.9, show_pdata = c("cell_type", "genotype", "total_features")) 
+} 
+```
+ks <- 2:6
+plot_list = list()
+for (i in seq_along(ks)) {
+p <- sc3_plot_markers(camps, k = ks[i], show_pdata = c("cell_type", "genotype", "total_features"))
+plot_list[[i]] <- p
+}
 
 ```{r fig.height=10, fig.width=10}
 variables <- c("cell_type", "genotype")
@@ -160,9 +172,22 @@ plot_components(sce, pcs[i, 1], pcs[i, 2], group = k, save = TRUE, folder = "plo
 
 Plot genes specific to cluster 5 and 6 (k=6)
 ```{r}
-genes <- c("Myl9", "Acta2", "Pdgfrb", "Kcnj8", "Myh11", "Rock1", "Tpm2", "Tpm1", "Sorbs1", "Mylk", "Smtn", "Des", "Cald1", "Tln1", "Vcl", 
-"Abcc9","Cd36","Arhgdib","Rgs5","Myo1b","Rgs4","Enpep","Ndufa4l2","Agtr1a","Vtn","Cystm1","Steap4","Cxcl12","Cpe","Gng11","Rsu1",
-"Ednra","Mprip","Itga1","Gnb4","Col4a1","Ebf1","Col4a2","Myadm")
+select_markers(sce, k = 6, clust_num = 5, vector_name = "genes")
+pcs <- data.frame(x = c("PC2", "PC3", "PC2", "PC3"),
+                  y = c("PC3", "PC4", "PC4", "PC6"),
+                  stringsAsFactors = FALSE)
+
+for(g in genes) {
+  if(g %in% row.names(sce)){
+    for (i in 1:nrow(pcs)) {
+      plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "SMC", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+```
+
+```{r}
+select_markers(sce, k = 6, clust_num = 6, vector_name = "genes")
 pcs <- data.frame(x = c("PC2", "PC3", "PC2", "PC3"),
                   y = c("PC3", "PC4", "PC4", "PC6"),
                   stringsAsFactors = FALSE)
@@ -178,10 +203,7 @@ for(g in genes) {
 
 Plot genes specific to cluster 4 (k=4)
 ```{r}
-genes <- c("Olfr558", "Esam", "Cd36", "Gucy1a3", "Gucy1b3", "Rgs4", "Ppp1r14a", "Mylk", "Myh11", "Rgs5", "Gm13889", "Pcp4l1", "Rasl12",
-           "Ndufa4l2", "Tagln", "Tpm2", "Myl9", "Epas1", "Kcne4", "Bcam", "Mfge8", "S1pr3", "Notch3", "Stk38l", "Mustn1", "Cpe", "Acta2",
-           "Tinagl1", "Cystm1", "Tpm1", "Ptp4a3", "Rbpms", "Ednra", "Cav1", "Cald1", "Cnn2", "Flna", "Itga7", "Gng11", "Actn4", "Tsc22d1", 
-           "Rsu1", "Ppp1r12a", "Mprip", "Jag1", "Atp1b2", "Pdgfrb", "Nr2f2", "Sparcl1", "Errfi1")
+select_markers(sce, k = 4, clust_num = 4, vector_name = "genes")
 
 pcs <- data.frame(x = c("PC2", "PC3", "PC2", "PC3"),
                   y = c("PC3", "PC4", "PC4", "PC6"),
@@ -196,30 +218,251 @@ for(g in genes) {
 }
 ```
 
+### Satellite cells
+plot genes cluster 3 9k = 4)
+```{r}
+select_markers(sce, k = 4, clust_num = 3, vector_name = "genes")
+
+pcs <- data.frame(x = c("PC2", "PC3", "PC2", "PC3"),
+                  y = c("PC3", "PC4", "PC4", "PC6"),
+                  stringsAsFactors = FALSE)
+
+#genes <- c("Myf5", "Fgfr4")
+
+for(g in genes) {
+  if(g %in% row.names(sce)){
+    for (i in 1:nrow(pcs)) {
+      plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "muSC", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+```
+
+### Component 1 and 3
+```{r}
+clusters <- c("sc3_4_clusters", "sc3_6_clusters")
+#pcs <- data.frame(x = c("PC1", "PC3", "PC2", "PC3"),
+#                  y = c("PC3", "PC4", "PC4", "PC6"),
+#                  stringsAsFactors = FALSE)
+for (k in clusters) {
+ # for (i in 1:nrow(pcs)) {
+plot_components(sce, "PC1", "PC3", group = k, save = TRUE, folder = "plots", subfolder = "cell_type", palette = 2)
+  }
+#}
+```
+
+
+```{r}
+for (i in 1:4) {
+  select_markers(sce, k = 4, clust_num = i, vector_name = paste0("genes_cluster_", i, sep = ""))
+}
+
+genes_cluster <- list(c(genes_cluster_1, genes_cluster_2, genes_cluster_3, genes_cluster_4))
+
+
+for(g in genes_cluster_1) {
+    if(g %in% row.names(sce)){
+      #for (i in 1:nrow(pcs)) {
+        plot_components(sce, "PC1", "PC3", group = g, folder = "plots", subfolder = "k4_cluster_1", alpha = 0.8, gene = TRUE)
+    #}
+  }
+}
+
+for(g in genes_cluster_2) {
+    if(g %in% row.names(sce)){
+      #for (i in 1:nrow(pcs)) {
+        plot_components(sce, "PC1", "PC3", group = g, folder = "plots", subfolder = "k4_cluster_2", alpha = 0.8, gene = TRUE)
+    #}
+  }
+}
+
+for(g in genes_cluster_3) {
+    if(g %in% row.names(sce)){
+      #for (i in 1:nrow(pcs)) {
+        plot_components(sce, "PC1", "PC3", group = g, folder = "plots", subfolder = "k4_cluster_3", alpha = 0.8, gene = TRUE)
+    #}
+  }
+}
+
+for(g in genes_cluster_4) {
+    if(g %in% row.names(sce)){
+      #for (i in 1:nrow(pcs)) {
+        plot_components(sce, "PC1", "PC3", group = g, folder = "plots", subfolder = "k4_cluster_4", alpha = 0.8, gene = TRUE)
+    #}
+  }
+}
+```
+
+### Cluster 5
+k = 8, cluster 5 FMOD cells
+```{r}
+plot_components(sce, "PC4", "PC7", group = "sc3_8_clusters", save = TRUE, folder = "plots", subfolder = "FMOD_cells", palette = 2)
+```
+
+```{r}
+select_markers(sce, k = 8, clust_num = 5)
+
+for(g in genes) {
+    if(g %in% row.names(sce)){
+      #for (i in 1:nrow(pcs)) {
+        plot_components(sce, "PC4", "PC7", group = g, folder = "plots", subfolder = "k8_cluster_5", alpha = 0.8, gene = TRUE)
+    #}
+  }
+}
+```
+
+
+### Genotype components
+Check PC6 and 7 (genotype components) in PC2-5 (cell type components)
+```{r}
+clusters <- c("sc3_4_clusters", "sc3_8_clusters", "sc3_9_clusters")
+
+x <- c(rep("PC6", 4), rep("PC7", 5))
+y <- c(rep(paste0("PC", 2:5), 2), "PC6")
+pcs <- data.frame(x = x,
+                  y = y,
+                  stringsAsFactors = FALSE)
+
+for (k in clusters) {
+  for (i in 1:nrow(pcs)) {
+plot_components(sce, pcs[i, 1], pcs[i, 2], group = k, save = TRUE, palette = 2, folder = "plots", subfolder = "genotype")
+  }
+}
+
+#Own colors for k = 4
+#for (k in clusters) {
+  for (i in 1:nrow(pcs)) {
+plot_components(sce, pcs[i, 1], pcs[i, 2], group = "sc3_4_clusters", save = TRUE, brewer = FALSE, hex_codes = c("#1b9e77", "#d95f02", "#7570b3", "#e7298a"), folder = "plots", subfolder = "genotype_fap")
+  }
+#}
+
+#Own colors for k = 8
+  for (i in 1:nrow(pcs)) {
+plot_components(sce, pcs[i, 1], pcs[i, 2], group = "sc3_8_clusters", save = TRUE, brewer = FALSE, hex_codes = c("#1b9e77", "#d95f02",  rep("#999999", 6)), folder = "plots", subfolder = "genotype_fap")
+  }
+
+#OWn colors for k = 9
+  for (i in 1:nrow(pcs)) {
+plot_components(sce, pcs[i, 1], pcs[i, 2], group = "sc3_9_clusters", save = TRUE, brewer = FALSE, hex_codes = c("#1b9e77", "#d95f02", "#7570b3", rep("#999999", 6)), folder = "plots", subfolder = "genotype_fap")
+  }
+
+#for (k in clusters) {
+  for (i in 1:nrow(pcs)) {
+plot_components(sce, pcs[i, 1], pcs[i, 2], group = "genotype", save = TRUE, brewer = FALSE, hex_codes = c("#FFC90C", "#89CAFF"), folder = "plots", subfolder = "genotype")
+  }
+#}
+```
+
+#### Sca1+ cells
+Markers for k = 8
+```{r}
+for (i in 1:2) {
+  select_markers(sce, k = 8, clust_num = i, vector_name = paste0("genes_cluster_", i, sep = ""))
+}
+
+for(g in genes_cluster_1) {
+    if(g %in% row.names(sce)){
+      for (i in 1:nrow(pcs)) {
+        plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "k8_cluster_1", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+
+for(g in genes_cluster_2) {
+    if(g %in% row.names(sce)){
+      for (i in 1:nrow(pcs)) {
+        plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "k8_cluster_2", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+```
+
+
+markers for k = 9
+```{r}
+for (i in 1:3) {
+  select_markers(sce, k = 9, clust_num = i, vector_name = paste0("genes_cluster_", i, sep = ""))
+}
+
+for(g in genes_cluster_1) {
+    if(g %in% row.names(sce)){
+      for (i in 1:nrow(pcs)) {
+        plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "k9_cluster_1", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+
+for(g in genes_cluster_2) {
+    if(g %in% row.names(sce)){
+      for (i in 1:nrow(pcs)) {
+        plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "k9_cluster_2", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+
+for(g in genes_cluster_3) {
+    if(g %in% row.names(sce)){
+      for (i in 1:nrow(pcs)) {
+        plot_components(sce, pcs[i, 1], pcs[i, 2], group = g, folder = "plots", subfolder = "k9_cluster_3", alpha = 0.8, gene = TRUE)
+    }
+  }
+}
+
+
+    if("Cd55" %in% row.names(sce)){
+      for (i in 1:nrow(pcs)) {
+        plot_components(sce, pcs[i, 1], pcs[i, 2], group = "Cd55", folder = "plots", subfolder = "k9_cluster_3", alpha = 0.8, gene = TRUE)
+    }
+  }
+```
+
+#### muSCs
+genotype differences in component 3 and 7. Although these cells don't cluster differently!? Look at gene weights to check which differences are there between these cells.
+
+Export gene weights to csv file
+```{r}
+rv <- rowVars(assay(sce))
+selected_genes <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]
+pca <- prcomp(t(assay(sce)[selected_genes,]))
+pca_loadings <- as.data.frame(pca$rotation)
+pca_loadings[order(pca_loadings[,1], decreasing = TRUE),]
+write.csv(pca_loadings, "tables/PCA_gene_weights.csv")
+```
+
+Plot genes with high weights in PC7
+```{r}
+genes <- c("Fos", "Sparc", "Apoe", "X.9", "Col3a1", "Lyz2", "Apod", "Pmp22", "Matn2", "Gsn", "Malat1", "Sat1", "Tinagl1", "Postn", "Gpc3", "Hspa1a", "Gas7", "Dbi", "Gpm6b", "H2.D1", "Cd9", "Gfra3", "Cst3", "Jun", "Hspa5", "Pdlim4", "Gpx3", "Myf5", "Myog", "Myod1", "Pax7", "Mymk")
+
+for(g in genes) {
+    if(g %in% row.names(sce)){
+      #for (i in 1:nrow(pcs)) {
+        plot_components(sce, "PC7", "PC3", group = g, folder = "plots", subfolder = "genotype_muSC", alpha = 0.8, gene = TRUE)
+    #}
+  }
+}
+```
+
+Get ensembl ID of X.9 genes
+Seems to be ribosomal RNA
+```{r}
+X.9 <- sce["X.9",]
+rowData(X.9)
+```
+
 
 ### Differentially expressed genes
 Export all differentially expressed genes to sce_object
 
 Function to filter for genes in clusters, padj and auroc
+export all significant genes above auroc to csv file of a designated k
 ```{r}
-filter_markers <- function(sce_object, k, padj = 0.01, auroc = 0.8, folder = "tables", filename) {
-  require(c("SC3", "lazyeval", "dplyr"))
-k_clusts <- paste("sc3_", k, "_markers_clusts", sep = "")
-k_auroc <- paste("sc3_", k, "_markers_auroc", sep = "")
-k_padj <- paste("sc3_", k, "_markers_padj", sep = "")
-
-sc3_plot_de_genes(sce, k = 6, show_pdata = TRUE)
-
-sce %>%
-  rowData() %>%
-  as_tibble() %>%
-  filter_(k_padj < padj & k_auroc > auroc) %>%
-  select_("mgi_symbol", "ensembl_gene_id",  "log10_mean_counts", k_auroc, k_clusts, k_padj) %>%
-  arrange_(padj) %>%
-  write.csv(paste(folder, "/", filename, ",csv"))
-}
+export_markers(sce, k = 6, folder = "tables", filename = "1moWTB_k6_markers")
 ```
 
+Select significant markers
+```{r}
+select_markers(sce, k = 6, clust_num = 1, vector_name = "genes")
+```
 
 
 #### k=6

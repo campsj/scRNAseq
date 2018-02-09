@@ -18,7 +18,7 @@ library(edgeR)
 set.seed(1234567)
 options(stringsAsFactors = FALSE)
 
-reads_qc <- readRDS("data/6moWTB_reads_qc.rds")
+reads_qc <- readRDS("data/1moWTB_reads_qc.rds")
 endog_genes <- !rowData(reads_qc)$is_feature_control
 erccs <- rowData(reads_qc)$is_feature_control
 
@@ -44,13 +44,13 @@ assay(reads_qc, "ruvg10") <- log2(
 ## RUVs
 ```{r}
 scIdx <- matrix(-1, ncol = max(table(reads_qc$individual)), nrow = 4)
-tmp <- which(reads_qc$batch == 1)
+tmp <- which(reads_qc$batch == "WT39.1")
 scIdx[1, 1:length(tmp)] <- tmp
-tmp <- which(reads_qc$batch == 2)
+tmp <- which(reads_qc$batch == "WT39.2")
 scIdx[2, 1:length(tmp)] <- tmp
-tmp <- which(reads_qc$batch == 3)
+tmp <- which(reads_qc$batch == "SGCB9.1")
 scIdx[3, 1:length(tmp)] <- tmp
-tmp <- which(reads_qc$batch == 4)
+tmp <- which(reads_qc$batch == "SGCB9.2")
 scIdx[4, 1:length(tmp)] <- tmp
 cIdx <- rownames(reads_qc)
 ruvs <- RUVs(counts(reads_qc), cIdx, k = 1, scIdx = scIdx, isLog = FALSE)
@@ -86,18 +86,16 @@ assay(reads_qc, "combat") <- ComBat(
 Doesn't work because of different dims per batch
 ```{r}
 # For a balanced design: 
-B1 <- logcounts(reads_qc[, reads_qc$batch == 1])
-B2 <- logcounts(reads_qc[, reads_qc$batch == 2])
-B3 <- logcounts(reads_qc[, reads_qc$batch == 3])
-B4 <- logcounts(reads_qc[, reads_qc$batch == 4])
-#assay(reads_qc, "mnn") <- mnnCorrect(
-#    B1, B2, B3, B4,  
-#    k = 20,
-#    sigma = 0.1,
-#    cos.norm.in = TRUE,
-#    cos.norm.out = TRUE,
-#   svd.dim = 2
-#)
+B1 <- logcounts(reads_qc[, reads_qc$genotype == "Healthy"])
+B2 <- logcounts(reads_qc[, reads_qc$genotype == "Dystrophic"])
+assay(reads_qc, "mnn") <- mnnCorrect(
+    B1, B2, 
+    k = 20,
+    sigma = 0.1,
+    cos.norm.in = TRUE,
+    cos.norm.out = TRUE,
+   svd.dim = 2
+)
 ```
 
 ## GLM

@@ -16,16 +16,11 @@ options(stringsAsFactors = FALSE)
 # Prepare dataset
 ## Load counts and annotation file
 ```{r}
-reads <- read.csv("data/htseq_counts_all.csv")
+reads <- read.csv("Data/reads_mtDNA.csv")
 rownames(reads) <- reads[, 1]
 reads <- reads[, -1]
-anno <- read.csv("data/annotation.csv", header = TRUE)
-i5 <- read.csv("data/i5_indexes.csv", header = TRUE)
-i7 <- read.csv("data/i7_indexes.csv", header = TRUE)
-anno <- anno %>% 
-  merge(i7, by = "i7_index") %>%
-  merge(i5, by = "i5_index")
-anno$sample_id <- paste(anno$i7_base, ".", anno$i5_base)
+anno <- read.csv("Data/annotation.csv", header = TRUE)
+anno$sample_id <- gsub("-", ".", anno$sample_id) #match sample_id with columns reads
 anno <- anno[order(anno$sample_id),] #order according to sample_id
 ```
 
@@ -133,9 +128,9 @@ hist(
   main = "Detected genes per cell",
   xlab = "Total genes"
 )
-abline(v = c(700), col = "red")
+abline(v = c(1000, 6000), col = "red")
 
-filter_by_expr_features <- (reads$total_features > 700)
+filter_by_expr_features <- (reads$total_features > 1000 & reads$total_features < 6000)
 
 knitr::kable(
   as.data.frame(table(filter_by_expr_features)),
@@ -255,8 +250,8 @@ reads_qc <- reads[rowData(reads)$use, colData(reads)$use]
 
 ## Save to RDS file
 ```{r}
-saveRDS(reads, file ="data/6moWTB_reads.rds")
-saveRDS(reads_qc, file = "data/6moWTB_reads_qc.rds")
+saveRDS(reads, file ="data/1moWTB_reads.rds")
+saveRDS(reads_qc, file = "data/1moWTB_reads_qc.rds")
 ```
 
 # Visualization
