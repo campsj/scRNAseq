@@ -34,3 +34,6 @@ Only for balanced design:
 + 
 
 6. PCA analysis
+
+# To do
++ Add script for pseudotime
