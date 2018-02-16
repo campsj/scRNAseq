@@ -1,7 +1,7 @@
 ---
 title: "Confounding factors"
 author: "Jordi Camps"
-date: "30 januari 2018"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
 output: html_document
 ---
 
@@ -15,30 +15,31 @@ library(scTools)
 # Identifying confounding factors
 ## Load sce object
 ```{r}
-reads_qc <- readRDS("data/6moWTB_reads_qc.rds")
+reads_qc <- readRDS("data/1moWTB_reads_qc.rds")
 endog_genes <- !rowData(reads_qc)$is_feature_control
 ```
 
 ## Correlations with PCs
 ### Plot PCA
 ```{r}
-plotPCA(reads_qc[endog_genes, ], exprs_values = "log2_counts", colour_by = "batch", size_by = "total_features")
-plotPCA(reads_qc[endog_genes, ], exprs_values = "log2_counts", colour_by = "batch", size_by = "total_counts")
+plotPCA(reads_qc[endog_genes, ], exprs_values = "logcounts_raw", colour_by = "batch", size_by = "total_features")
+plotPCA(reads_qc[endog_genes, ], exprs_values = "logcounts_raw", colour_by = "batch", size_by = "total_counts")
 ```
 ### Plot QC
 ```{r}
-plotQC(reads_qc[endog_genes, ], type = "find-pcs", exprs_values = "log2_counts", variable = "total_features")
-plotQC(reads_qc[endog_genes, ], type = "find-pcs", exprs_values = "log2_counts", variable = "total_counts")
+plotQC(reads_qc[endog_genes, ], type = "find-pcs", exprs_values = "logcounts_raw", variable = "total_features")
+plotQC(reads_qc[endog_genes, ], type = "find-pcs", exprs_values = "logcounts_raw", variable = "total_counts")
 ```
 
 ## Explanatory variables
 ```{r}
 plotQC(
-    reads_qc[endog_genes, ], type = "expl", exprs_values = "log2_counts", variables = c(
+    reads_qc[endog_genes, ], type = "expl", exprs_values = "logcounts_raw", variables = c(
       "total_features",
       "total_counts",
       "batch",
-      "individual",
+      "genotype",
+      "cell_type",
       "pct_counts_ERCC",
       "pct_counts_MT"))
 ```

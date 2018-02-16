@@ -16,17 +16,21 @@ library(viridis)
 library(SingleCellExperiment)
 library(grid)
 library(BiocGenerics)
-library(xlsx)
+#library(xlsx)
 library(scTools)
+library(dplyr)
+library(lazyeval)
+library(tidyr)
 options(stringsAsFactors = FALSE)
 ```
 
 # Import dataset
 ```{r}
 set.seed(1234567)
-camps <- readRDS("data/6moWTB_scran_PCS.rds")
-#endog_genes <- !rowData(camps)$is_feature_control
-#camps <- camps[endog_genes, ]
+sce <- readRDS("data/1moWTB_scran.rds")
+endog_genes <- !rowData(sce)$is_feature_control
+sce <- sce[endog_genes, ]
+#sce <- sce[endog_genes, ]
 #rowData(camps)$feature_symbol <- rownames(camps)
 #camps <- camps[!duplicated(rownames(camps)), ]
 ```
@@ -35,41 +39,91 @@ camps <- readRDS("data/6moWTB_scran_PCS.rds")
 # Clustering
 ## SC3
 ```{r, message = FALSE, warning=FALSE}
-camps <- sc3_prepare(camps)
-camps <- sc3_estimate_k(camps)
-metadata(camps)$sc3$k_estimation
-camps <- sc3(camps, ks = 2:6, biology = TRUE, n_cores = 1)
+sce <- sc3_prepare(sce)
+sce <- sc3_estimate_k(sce)
+metadata(sce)$sc3$k_estimation
+sce <- sc3(sce, ks = 2:11, biology = TRUE, n_cores = 1)
 ```
 
 ### SC3 interactive
 Check dataset interactively online
-```{r}
-#sc3_interactive(camps)
+```{r eval=FALSE, include=FALSE}
+sc3_interactive(camps)
 ```
 
 ### Export results to excel
+**Install perl on your computer to use this function!**
 ```{r}
-sc3_export_results_xls(camps, "6moWTB_sc3.xls")
+sc3_export_results_xls(sce)
 ```
 
-### Plot clusters on PC1-4
-Create dataframe of principal components to use
+## Check principal components to use
 ```{r}
-pcs <- data.frame(x = c("PC1", "PC1", "PC1", "PC2", "PC2", "PC3"), 
-                  y = c("PC2", "PC3", "PC4", "PC3", "PC4", "PC4"), 
+variables <- c("total_features", "total_counts", "cell_type", "genotype")
+for (v in variables) {
+  print(
+    plotQC(sce, type = "find-pcs", variable = v) +
+      ggtitle(v)
+  )
+}
+```
+
+```{r}
+k = c(2:11)
+clusters = c()
+for (i in k) {
+  clusters[i-1] <- paste("sc3", i, "clusters", sep = "_")
+}
+```
+
+
+```{r fig.height=10, fig.width=10}
+variables <- c("cell_type", "genotype")
+var_clust <- c(variables, clusters)
+for (v in var_clust) {
+  print(
+    plotPCA(sce, ncomponents = 10, colour_by = v) +
+    ggtitle(v)
+  )
+}
+```
+
+
+### Plot clusters on PC1-7
+Create dataframe of principal components to use. 
+Select principal components that are important for you in **pcs dataframe**
+```{r}
+pcs <- c()
+for (i in 1:7) {
+  pcs[i] <- paste("PC", i, sep = "")
+}
+```
+
+```{r}
+pcs <- data.frame(x = c("PC1", "PC1", "PC1", "PC2", "PC2", "PC2", "PC2", "PC3", "PC3", "PC3", "PC3", "PC4", "PC4", "PC4", "PC5", "PC6"), 
+                  y = c("PC2", "PC3", "PC4", "PC3", "PC4", "PC5", "PC6", "PC4", "PC5", "PC6", "PC7", "PC5", "PC6", "PC7", "PC7", "PC7"), 
                   stringsAsFactors = FALSE)
 ```
 
+Extract components out of singlecellexperiment object
+```{r}
+sce=plotPCA(sce, exprs_values = "logcounts", ntop=500, colour_by = "cell_type",  ncomponents=7, theme_size =10, return_SCE = TRUE)
+sce$PC1 <- reducedDim(sce)[,1]
+sce$PC2 <- reducedDim(sce)[,2]
+sce$PC3 <- reducedDim(sce)[,3]
+sce$PC4 <- reducedDim(sce)[,4]
+sce$PC5 <- reducedDim(sce)[,5]
+sce$PC6 <- reducedDim(sce)[,6]
+sce$PC7 <- reducedDim(sce)[,7]
+```
+
+
 Plot clusters over all selected PCs
 ```{r}
-clusters <- c("sc3_2_clusters", "sc3_3_clusters", "sc3_4_clusters", "sc3_5_clusters", "sc3_6_clusters")
-if (dir.exists(paste("sc3/", "k5", sep = "")) == FALSE)  {
-  dir.create(paste("sc3/", "k5", sep =""))
-}
 for (k in clusters) {
   for (i in 1:nrow(pcs)) {
-  camps[[k]] <- factor(camps[[k]])
-  plot_components(camps, pcs[i, 1], pcs[i, 2], group = k, palette = 3, folder = "sc3", subfolder = "k5", width = 14, height = 12)
+  #sce[[k]] <- factor(sce[[k]])
+  plot_components(sce, pcs[i, 1], pcs[i, 2], group = k, palette = 3, folder = "plots", subfolder = "sc3", width = 14, height = 12)
   }
 }
 ```
@@ -77,26 +131,25 @@ for (k in clusters) {
 ### Differentially expressed genes
 Export all differentially expressed genes to sce_object
 ```{r}
-sc3_plot_de_genes(camps, k = 5, show_pdata = )
+sc3_plot_de_genes(sce, k = 9, show_pdata = TRUE)
 ```
 
 Export excel with significant DE genes
 ```{r}
-de_genes <- rowData(camps)
-de_order <- order(de_genes$sc3_5_de_padj, na.last = TRUE)
-de_genes <- de_genes[order(de_genes$sc3_5_de_padj, na.last = TRUE),]
-de_genes <- de_genes[!is.na(de_genes$sc3_5_de_padj), ]
-de_genes <- de_genes[de_genes$sc3_5_de_padj < 0.01, ]
-de_genes <- de_genes[, c("mgi_symbol", "sc3_5_markers_auroc", "sc3_5_markers_clusts", "sc3_5_de_padj")]
-write.xlsx(de_genes, "6moWTB_de_genes.xlsx")
+sce %>%
+  rowData() %>%
+  as_tibble() %>%
+  filter(sc3_9_de_padj < 0.01) %>%
+  select(mgi_symbol, ensembl_gene_id, sc3_9_markers_auroc, sc3_9_markers_clusts, sc3_9_de_padj) %>%
+  arrange(sc3_9_de_padj) %>%
+  write.csv("tables/1moWTB_k9_de_genes.csv")
 ```
+
 
 Plot DE genes on PCA
 ```{r}
 de_k5 <- de_genes$mgi_symbol
-if (dir.exists(paste("sc3/", "de_k5", sep = "")) == FALSE)  {
-  dir.create(paste("sc3/", "de_k5", sep =""))
-}
+
 for(g in de_k5) {
   if(g %in% row.names(camps)){
       for (i in 1:6) {
@@ -148,6 +201,25 @@ plot_list[[i]] <- p
 }
 for (i in 1:5) {
   save_pheatmap_tiff(plot_list[[i]], paste("SC3/markers_k=",i+1,".tiff", sep = ""), width = 20, height = 20)
+}
+```
+
+plot adipogenesis genes enrichr
+```{r}
+adipo <- c("Ncor2", "Gdf10", "Stat5b", "Socs1", "Nrip1", "Il6st", "Nr3c1")
+for(g in adipo) {
+  if(g %in% row.names(sce)){
+      plot_components(sce, "PC2", "PC3", group = g, folder = "plots", subfolder = "adipo", gene = TRUE)
+  }
+}
+```
+
+```{r}
+adipo_fap <- c("Gdf10", "Pdgfra", "Meox2", "Osr1")
+for(g in adipo_fap) {
+  if(g %in% row.names(sce)){
+      plot_components(sce, "PC2", "PC3", group = g, folder = "plots", subfolder = "adipo_fap", gene = TRUE)
+  }
 }
 ```
 
