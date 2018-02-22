@@ -80,41 +80,19 @@ reads <- calculateQCMetrics(reads,
 )
 ```
 
-### Annotate genes
-```{r}
-reads <- getBMFeatureAnnos(
-  reads,
-  filters = "ensembl_gene_id",
-  attributes = c(
-    "ensembl_gene_id",
-    "mgi_symbol",
-    "chromosome_name",
-    "transcript_biotype",
-    "transcript_start",
-    "transcript_end",
-    "transcript_count"),
-  feature_symbol = "mgi_symbol",
-  feature_id = "ensembl_gene_id",
-  biomart = "ENSEMBL_MART_ENSEMBL",
-  dataset = "mmusculus_gene_ensembl",
-  host = "www.ensembl.org"
-)
-rownames(reads) <- make.names(rowData(reads)$mgi_symbol, unique = TRUE)
-rownames(reads) <- gsub("NA", "ERCC", rownames(reads))
-```
 
 # Cell quality control
 ## Total counts per cell
 ```{r, fig.height=4.5, fig.width=6}
 hist(
-  reads$total_counts,
+  log(reads$total_counts),
   breaks = 50,
   main = "Reads per cell",
-  xlab = "Total Reads"
+  xlab = "log(Total Reads)"
 )
-abline(v = 1e5, col = "red")
+abline(v = c(log(2e4), log(3e6)), col = "red")
 
-filter_by_total_counts <- (reads$total_counts > 1e5)
+filter_by_total_counts <- (reads$total_counts > 2e4 & reads$total_counts < 3e6)
 
 knitr::kable(
   as.data.frame(table(filter_by_total_counts)),
@@ -133,9 +111,9 @@ hist(
   main = "Detected genes per cell",
   xlab = "Total genes"
 )
-abline(v = c(700), col = "red")
+abline(v = c(800, 3000), col = "red")
 
-filter_by_expr_features <- (reads$total_features > 700)
+filter_by_expr_features <- (reads$total_features > 800 & reads$total_features < 3000)
 
 knitr::kable(
   as.data.frame(table(filter_by_expr_features)),
@@ -151,7 +129,7 @@ plotPhenoData(
   reads,
   aes_string(x = "total_features",
              y = "pct_counts_MT",
-             colour = "batch", alpha = 0.8, size = 1), theme = 12) +
+             colour = "batch")) +
   geom_hline(yintercept = 10, col = "red") +
   labs(x = "Total genes", y = "Percentage mitochondrial genes")
 
@@ -171,12 +149,19 @@ plotPhenoData(
   reads,
   aes_string(x = "total_features",
              y = "pct_counts_ERCC",
-             colour = "cell_type", alpha = 0.9, size = 1), theme = 12) +
-  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3) + 
-  geom_hline(yintercept = c(1, 20), col = "red") +
+             colour = "marker")) +
+  geom_hline(yintercept = 25, col = "red") +
   labs(x = "Total genes", y = "Percentage ERCC") 
 
-filter_by_ERCC <- (reads$pct_counts_ERCC < 20 & reads$pct_counts_ERCC > 1)
+plotPhenoData(
+  reads,
+  aes_string(x = "total_features",
+             y = "pct_counts_ERCC",
+             colour = "genotype")) +
+  geom_hline(yintercept = 25, col = "red") +
+  labs(x = "Total genes", y = "Percentage ERCC") 
+
+filter_by_ERCC <- (reads$pct_counts_ERCC < 25)
 
 knitr::kable(
   as.data.frame(table(filter_by_ERCC)),
@@ -217,6 +202,29 @@ table(reads$outlier)
 ```
 
 # Gene analysis
+## Annotate genes
+```{r}
+reads <- getBMFeatureAnnos(
+  reads,
+  filters = "ensembl_gene_id",
+  attributes = c(
+    "ensembl_gene_id",
+    "mgi_symbol",
+    "chromosome_name",
+    "transcript_biotype",
+    "transcript_start",
+    "transcript_end",
+    "transcript_count"),
+  feature_symbol = "mgi_symbol",
+  feature_id = "ensembl_gene_id",
+  biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "mmusculus_gene_ensembl",
+  host = "www.ensembl.org"
+)
+rownames(reads) <- make.names(rowData(reads)$mgi_symbol, unique = TRUE)
+rownames(reads) <- gsub("NA", "ERCC", rownames(reads))
+```
+
 ## Gene expression
 ```{r, fig.height=8, fig.width=5}
 plotQC(reads, type = "highest-expression")
@@ -253,10 +261,17 @@ reducedDim(reads) <- NULL
 reads_qc <- reads[rowData(reads)$use, colData(reads)$use]
 ```
 
+## Cells per marker and genotype left
+```{r}
+table(reads$marker, reads$genotype)
+table(reads_qc$marker, reads_qc$genotype)
+```
+
+
 ## Save to RDS file
 ```{r}
-saveRDS(reads, file ="data/6moWTB_reads.rds")
-saveRDS(reads_qc, file = "data/6moWTB_reads_qc.rds")
+saveRDS(reads, file ="data/13moWTB_reads.rds")
+saveRDS(reads_qc, file = "data/13moWTB_reads_qc.rds")
 ```
 
 # Visualization
@@ -273,15 +288,13 @@ pca1 <- plotPCA(reads[endog_genes, ],
                 size_by = "total_features",
                 shape_by = "individual",
                 exprs_values = "logcounts_raw",
-                theme=12) #+
-  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+                theme=12) 
 pca2 <- plotPCA(reads_qc[endog_genes, ],
                 colour_by = "batch",
                 size_by = "total_features",
                 shape_by = "individual",
                 exprs_values = "logcounts_raw",
-                theme=12) #+
-  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+                theme=12) 
 multiplot(pca1, pca2, cols = 2)
 ```
 
@@ -294,24 +307,21 @@ tsne1 <- plotTSNE(reads[endog_genes, ],
                  size_by = "total_features",
                  shape_by = "individual",
                  exprs_values = "logcounts_raw",
-                 rand_seed = 123456) #+
-  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+                 rand_seed = 123456) 
 tsne2 <- plotTSNE(reads_qc[endog_genes, ],
                  perplexity = 2,
                  colour_by = "batch",
                  size_by = "total_features",
                  shape_by = "individual",
                  exprs_values = "logcounts_raw",
-                 rand_seed = 123456) #+
-  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+                 rand_seed = 123456) 
 tsne3 <- plotTSNE(reads_qc[endog_genes, ],
                  perplexity = 20,
                  colour_by = "batch",
                  size_by = "total_features",
                  shape_by = "individual",
                  exprs_values = "logcounts_raw",
-                 rand_seed = 123456) #+
-  #scale_colour_brewer(name = "Batch", type= "qual", palette = 3)
+                 rand_seed = 123456) 
 multiplot(tsne1, tsne2, tsne3, cols = 3)
 ```
 
