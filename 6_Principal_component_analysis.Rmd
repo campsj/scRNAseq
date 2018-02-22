@@ -91,19 +91,14 @@ Extract genes from different principal components to check for biological proces
 2. Saving weights with genes in ascending order per principal component
 
 Extract gene weight for all principal components
+500 is the amount of genes we selecte to do the PCA analysis on
 ```{r}
-extract_PC_gene_weights <- function(sce_object, ntop = 500, file_name = "PCA_gene_weights.xlsx") {
-rv <- rowVars(assay(sce_object))
-selected_genes <- order(rv, decreasing = TRUE)[seq_len(min(ntop, length(rv)))]
-pca <- prcomp(t(assay(sce_object)[selected_genes,]))
+rv <- rowVars(assay(sce_object))#fill in name of sce_object
+selected_genes <- order(rv, decreasing = TRUE)[seq_len(min(ntop, length(rv)))]#Change ntop with amount of genes you want to do PCA on
+pca <- prcomp(t(assay(sce_object)[selected_genes,]))#fill in name of sce_object
 pca_loadings <- as.data.frame(pca$rotation)
 pca_loadings[order(pca_loadings[,1], decreasing = TRUE),]
-write.xlsx(pca_loadings, file_name)
-}
-```
-
-```{r}
-extract_PC_gene_weights(camps)
+write.xlsx(pca_loadings, file_name)#fill in filename
 ```
 
 Save every principal component in a seperate data frame with gene name and weight in decreasing order by use of save_PC_weights function of scTools package.
