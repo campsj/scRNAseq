@@ -103,13 +103,23 @@ plotRLE(
 ## Scran
 ### Compute size factors for genes and spike-ins
 ```{r}
-#set_exprs(reads_qc, "log2_counts") <- exprs(reads_qc)
-qclust <- quickCluster(reads_qc, min.size = 25)
-reads_qc <- computeSumFactors(reads_qc, clusters = qclust)
+#qclust <- quickCluster(reads_qc, min.size = 25)
+reads_qc <- computeSumFactors(reads_qc, sizes = c(20, 40, 60, 80))
 reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
 summary(sizeFactors(reads_qc))
+plot(sizeFactors(reads_qc), reads_qc$total_counts)
 reads_qc <- normalize(reads_qc)
 ```
+
+```{r}
+qclust <- quickCluster(reads_qc, min.size = 30)
+reads_qc <- computeSumFactors(reads_qc, cluster = qclust)
+reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
+summary(sizeFactors(reads_qc))
+plot(sizeFactors(reads_qc), reads_qc$total_counts)
+reads_qc <- normalize(reads_qc)
+```
+
 
 ```{r}
 saveRDS(reads_qc, "data/1moWTB_scran.rds")
