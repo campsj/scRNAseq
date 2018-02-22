@@ -9,7 +9,8 @@ output: html_document
 library(scater)
 library(knitr)
 library(SingleCellExperiment)
-library(magrittr)
+library(dplyr)
+library(ggplot2)
 options(stringsAsFactors = FALSE)
 ```
 
@@ -149,7 +150,7 @@ plotPhenoData(
   reads,
   aes_string(x = "total_features",
              y = "pct_counts_ERCC",
-             colour = "marker")) +
+             colour = "batch")) +
   geom_hline(yintercept = 25, col = "red") +
   labs(x = "Total genes", y = "Percentage ERCC") 
 
@@ -157,7 +158,9 @@ plotPhenoData(
   reads,
   aes_string(x = "total_features",
              y = "pct_counts_ERCC",
-             colour = "genotype")) +
+             colour = "marker",
+             shape = "genotype",
+             size = 1)) +
   geom_hline(yintercept = 25, col = "red") +
   labs(x = "Total genes", y = "Percentage ERCC") 
 
@@ -265,6 +268,20 @@ reads_qc <- reads[rowData(reads)$use, colData(reads)$use]
 ```{r}
 table(reads$marker, reads$genotype)
 table(reads_qc$marker, reads_qc$genotype)
+```
+
+## Plate layout before and after QC
+```{r}
+temp <- as_tibble(colData(reads))
+ggplot(temp, aes(x = col_XT, y = row_XT, col = marker, shape = genotype)) +
+  geom_point(size = 5) +
+  scale_y_discrete(limits = rev(unique(sort(temp$row_XT)))) +
+  ggtitle("Plate layout before QC")
+temp <- as_tibble(colData(reads_qc))
+ggplot(temp, aes(x = col_XT, y = row_XT, col = marker, shape = genotype)) +
+  geom_point(size = 5) +
+  scale_y_discrete(limits = rev(unique(sort(temp$row_XT)))) +
+  ggtitle("Plate layout after QC")
 ```
 
 
