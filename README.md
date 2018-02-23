@@ -39,5 +39,8 @@ Only for balanced design:
 ### 6. PCA analysis
 + Export gene weights in principal components
 
+### 7. SCENIC
++ Gene regulatory network analysis
+
 ## To do
 + Add script for pseudotime
