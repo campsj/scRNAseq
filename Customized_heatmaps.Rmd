@@ -1,0 +1,260 @@
+---
+title: "Customized heatmaps"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(SingleCellExperiment)
+library(pheatmap)
+library(scTools)
+library(plyr)
+library(SC3)
+library(RColorBrewer)
+library(viridis)
+```
+
+```{r}
+sce <- readRDS("data/1moWTB_reads_qc_scran_SC3.rds")
+sce$sc3_4_clusters <- revalue(sce$sc3_4_clusters, c("1" = "FAP/MAB", "2" = "Schwann cells", "3" = "Satellite cells", "4" = "Smooth muscle cells"))
+```
+
+SC3 functions
+
+```{r}
+make_col_ann_for_heatmaps <- function(object, show_pdata) {
+    if (any(!show_pdata %in% colnames(colData(object)))) {
+        show_pdata_excl <- show_pdata[!show_pdata %in% colnames(colData(object))]
+        show_pdata <- show_pdata[show_pdata %in% colnames(colData(object))]
+        message(paste0("Provided columns '", paste(show_pdata_excl, collapse = "', '"), "' do not exist in the phenoData table!"))
+        if (length(show_pdata) == 0) {
+            return(NULL)
+        }
+    }
+    ann <- NULL
+    if (is.null(metadata(object)$sc3$svm_train_inds)) {
+        ann <- colData(object)[, colnames(colData(object)) %in% show_pdata]
+    } else {
+        ann <- colData(object)[metadata(object)$sc3$svm_train_inds, colnames(colData(object)) %in% 
+            show_pdata]
+    }
+    # remove columns with 1 value only
+    if (length(show_pdata) > 1) {
+        keep <- unlist(lapply(ann, function(x) {
+            length(unique(x))
+        })) > 1
+        if (!all(keep)) {
+            message(paste0("Columns '", paste(names(keep)[!keep], collapse = "', '"), "' were excluded from annotation since they contained only a single value."))
+        }
+        ann <- ann[, names(keep)[keep]]
+        if (ncol(ann) == 0) {
+            ann <- NULL
+        } else {
+            ann <- as.data.frame(lapply(ann, function(x) {
+                if (nlevels(as.factor(x)) > 9) 
+                  x else as.factor(x)
+            }))
+            # convert outlier scores back to numeric
+            for (i in grep("_log2_outlier_score", colnames(ann))) {
+                if (class(ann[, i]) == "factor") {
+                  ann[, i] <- as.numeric(levels(ann[, i]))[ann[, i]]
+                }
+            }
+        }
+    } else {
+        if (length(unique(ann)) > 1) {
+            ann <- as.data.frame(ann)
+            colnames(ann) <- show_pdata
+            if (!grepl("_log2_outlier_score", show_pdata)) {
+                ann <- as.data.frame(lapply(ann, function(x) {
+                  if (nlevels(as.factor(x)) > 9) 
+                    return(x) else return(as.factor(x))
+                }))
+            }
+        } else {
+            message(paste0("Column '", show_pdata, "' was excluded from annotation since they contained only a single value."))
+            ann <- NULL
+        }
+    }
+    return(ann)
+}
+```
+
+
+```{r}
+organise_marker_genes <- function(object, k, p_val, auroc) {
+    dat <- rowData(object)[, c(paste0("sc3_", k, "_markers_clusts"), paste0("sc3_", k, 
+        "_markers_auroc"), paste0("sc3_", k, "_markers_padj"), "feature_symbol")]
+    dat <- dat[dat[, paste0("sc3_", k, "_markers_padj")] < p_val & !is.na(dat[, paste0("sc3_", 
+        k, "_markers_padj")]), ]
+    dat <- dat[dat[, paste0("sc3_", k, "_markers_auroc")] > auroc, ]
+    
+    d <- NULL
+    
+    for (i in sort(unique(dat[, paste0("sc3_", k, "_markers_clusts")]))) {
+        tmp <- dat[dat[, paste0("sc3_", k, "_markers_clusts")] == i, ]
+        tmp <- tmp[order(tmp[, paste0("sc3_", k, "_markers_auroc")], decreasing = TRUE), ]
+        d <- rbind(d, tmp)
+    }
+    
+    return(d)
+}
+```
+
+
+```{r}
+markers_for_heatmap <- function(markers) {
+    res <- NULL
+    for (i in unique(markers[, 1])) {
+        tmp <- markers[markers[, 1] == i, ]
+        if (nrow(tmp) > 10) {
+            res <- rbind(res, tmp[1:10, ])
+        } else {
+            res <- rbind(res, tmp)
+        }
+    }
+    
+    return(res)
+}
+```
+
+
+
+
+```{r fig.height=10, fig.width=10}
+#plot_markers_trial <- function(object, k, auroc = 0.85, p.val = 0.01, show_pdata = NULL) {
+  if (is.null(metadata(sce)$sc3$consensus)) {
+    warning(paste0("Please run sc3_consensus() first!"))
+    return(sce)
+  }
+  hc <- metadata(sce)$sc3$consensus[[as.character(4)]]$hc
+  dataset <- get_processed_dataset(sce)
+  if (!is.null(metadata(sce)$sc3$svm_train_inds)) {
+    dataset <- dataset[, metadata(sce)$sc3$svm_train_inds]
+  }
+
+  add_ann_col <- FALSE
+  ann <- NULL
+  if (!is.null(NULL)) {
+    ann <- make_col_ann_for_heatmaps(sce, NULL)
+    if (!is.null(ann)) {
+      add_ann_col <- TRUE
+      # make same names for the annotation table
+      rownames(ann) <- colnames(dataset)
+    }
+  }
+
+  # get all marker genes
+  markers <- organise_marker_genes(sce, 4, 0.01, 0.85)
+  # get top 10 marker genes of each cluster
+  markers <- markers_for_heatmap(markers)
+
+  row.ann <- data.frame(clust_num = factor(markers[, 1], levels = unique(markers[, 1])))
+  clust_names <- data.frame(clust_num = 1:4, Cluster = c("FAP/MAB", "Satellite cells", "Schwann cells", "Smooth muscle cells"))
+  row.ann <- merge(row.ann, clust_names, by = "clust_num")
+  row.ann <- row.ann["Cluster"]
+  #row.ann <- data.frame(Cluster = sce$sc3_4_clusters)
+  rownames(row.ann) <- markers$feature_symbol
+
+  mat_colors <- list(Cluster = brewer.pal(4, "Set2"), genotype = c("#e41a1c", "#377eb8"))
+  names(mat_colors$Cluster) <- unique(row.ann$Cluster)
+  names(mat_colors$genotype) <- unique(ann$genotype)
+  #names(Cluster) <- c("FAP/MAB", "Satellite cells", "Schwann cells", "Smooth muscle cells")
+  #anno_colors <- list(Cluster = Cluster)
+
+  do.call(pheatmap::pheatmap, c(list(dataset[markers$feature_symbol, , drop = FALSE],
+                                     color = colorRampPalette(rev(brewer.pal(n = 11, name = "RdYlBu")))(100),
+                                     show_colnames = FALSE,
+                                     cluster_rows = FALSE, 
+                                     cluster_cols = hc, 
+                                     #cutree_cols = 4, 
+                                     annotation_row = row.ann, 
+                                     annotation_names_row = FALSE, 
+                                     #gaps_row = which(diff(markers[, 1]) != 0), 
+                                     cellheight = 14,
+                                     cellwidth = 0.5,
+                                     treeheight_col = 0),
+                                     list(annotation_col = ann)[add_ann_col], 
+                                     list(annotation_colors = mat_colors, 
+                                     annotation_legend = FALSE,
+                                     fontsize = 12,
+                                     filename = "plots/heatmap/k4.pdf",
+                                     width = 5,
+                                     height = 8
+                                     )))
+#}
+```
+
+
+# Satellite cells
+```{r}
+sce_muSC <- sce[ , sce$sc3_4_clusters == "Satellite cells"]
+sce_muSC <- sc3_prepare(sce_muSC)
+sce_muSC <- sc3_estimate_k(sce_muSC)
+metadata(sce_muSC)$sc3$k_estimation
+sce_muSC <- sc3(sce_muSC, ks = 4, biology = TRUE, n_cores = 1)
+```
+
+```{r}
+#plot_markers_trial <- function(object, k, auroc = 0.85, p.val = 0.01, show_pdata = NULL) {
+  if (is.null(metadata(sce)$sc3$consensus)) {
+    warning(paste0("Please run sc3_consensus() first!"))
+    return(sce_muSC)
+  }
+  hc <- metadata(sce_muSC)$sc3$consensus[[as.character(4)]]$hc
+  dataset <- get_processed_dataset(sce_muSC)
+  if (!is.null(metadata(sce_muSC)$sc3$svm_train_inds)) {
+    dataset <- dataset[, metadata(sce_muSC)$sc3$svm_train_inds]
+  }
+
+  add_ann_col <- FALSE
+  ann <- NULL
+  if (!is.null("genotype")) {
+    ann <- make_col_ann_for_heatmaps(sce_muSC, "genotype")
+    if (!is.null(ann)) {
+      add_ann_col <- TRUE
+      # make same names for the annotation table
+      rownames(ann) <- colnames(dataset)
+    }
+  }
+
+  # get all marker genes
+  markers <- organise_marker_genes(sce_muSC, 4, 0.05, 0.85)
+  # get top 10 marker genes of each cluster
+  markers <- markers_for_heatmap(markers)
+
+  row.ann <- data.frame(clust_num = factor(markers[, 1], levels = unique(markers[, 1])))
+  clust_names <- data.frame(clust_num = 1:4, Cluster = c("Quiescent SC", "Activated SC", "Myoblast", "Dystrophic SC"))
+  row.ann <- merge(row.ann, clust_names, by = "clust_num")
+  row.ann <- row.ann["Cluster"]
+  #row.ann <- data.frame(Cluster = sce_muSC$sc3_4_clusters)
+  rownames(row.ann) <- markers$feature_symbol
+
+  mat_colors <- list(Cluster = brewer.pal(4, "Set3"), genotype = c("#e41a1c", "#377eb8"))
+  names(mat_colors$Cluster) <- unique(row.ann$Cluster)
+  names(mat_colors$genotype) <- unique(ann$genotype)
+  #names(Cluster) <- c("FAP/MAB", "Satellite cells", "Schwann cells", "Smooth muscle cells")
+  #anno_colors <- list(Cluster = Cluster)
+
+  do.call(pheatmap::pheatmap, c(list(dataset[markers$feature_symbol, , drop = FALSE],
+                                     color = colorRampPalette(rev(brewer.pal(n = 11, name = "RdYlBu")))(100),
+                                     show_colnames = FALSE,
+                                     cluster_rows = FALSE, 
+                                     cluster_cols = hc, 
+                                     cutree_cols = 4, 
+                                     annotation_row = row.ann, 
+                                     annotation_names_row = FALSE, 
+                                     #gaps_row = which(diff(markers[, 1]) != 0), 
+                                     cellheight = 20,
+                                     cellwidth = 2,
+                                     treeheight_col = 0),
+                                     list(annotation_col = ann)[add_ann_col], 
+                                     list(annotation_colors = mat_colors, 
+                                     annotation_legend = TRUE,
+                                     fontsize.row = 28,
+                                     filename = "plots/heatmap/muSC.pdf",
+                                     width = 5,
+                                     height = 8
+                                     )))
+#}
+```
