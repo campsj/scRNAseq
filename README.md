@@ -36,7 +36,7 @@ Only for balanced design:
 + Plot PCA with sc3 clusters
 + Filter marker genes and plot them on PCA
 
-### 6. PCA analysis
+### 6. PCA and tSNE analysis
 + Export gene weights in principal components
 
 ### 7. SCENIC
