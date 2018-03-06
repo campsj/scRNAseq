@@ -47,4 +47,4 @@ Only for balanced design:
 + SLICER
 
 ## To do
-+ Add script for pseudotime
++ Automate functions for easy analysis
