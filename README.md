@@ -42,5 +42,9 @@ Only for balanced design:
 ### 7. SCENIC
 + Gene regulatory network analysis
 
+### 8. PSEUDOTIME
++ TSCAN
++ SLICER
+
 ## To do
 + Add script for pseudotime
