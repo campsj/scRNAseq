@@ -1,0 +1,110 @@
+---
+title: "Pseudotime"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(SingleCellExperiment)
+library(scTools)
+library(dplyr)
+library(plyr)
+options(stringsAsFactors = FALSE)
+```
+
+## Import dataset
+```{r}
+sce <- readRDS("data/sce_muSC_sc3.rds")
+(sce$cluster <- sce$sc3_4_clusters)
+```
+
+## TSCAN
+```{r}
+library(TSCAN)
+```
+
+```{r}
+cellLabels <- sce$cell_labels
+counts <- counts(sce)
+colnames(counts) <- cellLabels
+proc_counts <- TSCAN::preprocess(counts)
+colnames(proc_counts) <- 1:ncol(counts)
+counts_clust <- TSCAN::exprmclust(proc_counts, clusternum = 4)
+TSCAN::plotmclust(counts_clust)
+```
+
+## SLICER
+```{r}
+library(SLICER)
+library("lle")
+library(ggplot2)
+library(ggthemes)
+library(ggbeeswarm)
+slicer_genes <- select_genes(t(counts))
+k <- select_k(t(counts[slicer_genes,]), kmin = 5, kmax=25)
+```
+
+```{r}
+slicer_traj_lle <- lle(t(counts[slicer_genes,]), m = 2, k)$Y
+```
+
+```{r}
+reducedDim(sce, "LLE") <- slicer_traj_lle
+plotReducedDim(sce, use_dimred = "LLE", colour_by = "genotype") +
+    xlab("LLE component 1") + ylab("LLE component 2") +
+    ggtitle("Locally linear embedding of cells from SLICER")
+```
+
+```{r}
+slicer_traj_graph <- conn_knn_graph(slicer_traj_lle, 3)
+plot(slicer_traj_graph, main = "Fully connected kNN graph from SLICER")
+```
+
+```{r}
+ends <- find_extreme_cells(slicer_traj_graph, slicer_traj_lle)
+```
+
+```{r}
+start <- ends[1]
+```
+
+
+```{r}
+pseudotime_order_slicer <- cell_order(slicer_traj_graph, start)
+branches <- assign_branches(slicer_traj_graph, start)
+
+pseudotime_slicer <-
+    data.frame(
+        Timepoint = cellLabels,
+        pseudotime = NA,
+        State = branches
+    )
+pseudotime_slicer$pseudotime[pseudotime_order_slicer] <-
+    1:length(pseudotime_order_slicer)
+sce$pseudotime_slicer <- pseudotime_slicer$pseudotime
+```
+
+```{r}
+ggplot(as.data.frame(colData(sce)), 
+       aes(x = pseudotime_slicer, 
+           y = sc3_4_clusters, colour = sc3_4_clusters)) +
+    geom_quasirandom(groupOnX = FALSE) +
+    scale_color_tableau() + theme_classic() +
+    xlab("SLICER pseudotime (cell ordering)") +
+    ylab("Timepoint") +
+    theme_classic()
+```
+
+```{r}
+sce <- plotPCA(sce, colour_by = "cluster", 
+                    return_SCE = TRUE)
+sce$PC1 <- reducedDim(sce, "PCA")[,1]
+```
+
+
+```{r}
+plotExpression(sce, "Myf5", x = "pseudotime_slicer", 
+               colour_by = "cluster", show_violin = FALSE,
+               show_smooth = TRUE)
+```
