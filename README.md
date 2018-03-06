@@ -38,6 +38,8 @@ Only for balanced design:
 
 ### 6. PCA and tSNE analysis
 + Export gene weights in principal components
++ Plot PCA and tSNE
++ Plot gene expression on PCA and tSNE
 
 ### 7. SCENIC
 + Gene regulatory network analysis
