@@ -33,8 +33,9 @@ Only for balanced design:
 ### 5. Clustering with SC3
 + Perform clustering with SC3
 + Check clusters online
-+ Plot PCA with sc3 clusters
-+ Filter marker genes and plot them on PCA
++ Plot PCA and tSNE with sc3 clusters
++ Plot expression of clusters
++ Make adjusted heatmaps
 
 ### 6. PCA and tSNE analysis
 + Export gene weights in principal components
