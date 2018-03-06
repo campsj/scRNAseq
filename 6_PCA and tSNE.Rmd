@@ -1,0 +1,70 @@
+---
+title: "PCA and tSNE"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+## Load packages and data
+```{r}
+library(scTools)
+library(dplyr)
+library(scater)
+options(stringsAsFactors = FALSE)
+```
+
+## Load data
+```{r}
+reads_qc <- readRDS("data/6moWTB_reads_qc.rds")
+endog_genes <- !rowData(reads_qc)$is_feature_control
+erccs <- rowData(reads_qc)$is_feature_control
+```
+
+## Normalize
+```{r}
+qclust <- quickCluster(reads_qc, min.size = 20)
+reads_qc <- computeSumFactors(reads_qc, clusters = qclust)
+reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
+summary(sizeFactors(reads_qc))
+sce <- normalize(reads_qc)
+```
+
+## Extract principal components
+```{r fig.height=10, fig.width=10}
+(sce=plotPCA(sce, exprs_values = "logcounts", ntop=500, colour_by = "cell_type",  ncomponents=4, theme_size =10, return_SCE = TRUE))
+sce$PC1 <- reducedDim(sce)[,1]
+sce$PC2 <- reducedDim(sce)[,2]
+sce$PC3 <- reducedDim(sce)[,3]
+sce$PC4 <- reducedDim(sce)[,4]
+```
+
+## Extract tSNE dimensions
+```{r}
+set.seed(123)
+(sce <- plotTSNE(sce, colour_by = "sc3_9_clusters", return_SCE = TRUE, perplexity = 20, exprs_values = "logcounts"))
+sce$Dim1 <- reducedDims(sce)$TSNE[,1]
+sce$Dim2 <- reducedDims(sce)$TSNE[,2]
+```
+
+## Plot gene expression on dimensions
+```{r}
+genes <- c("Dcn", "Sox10", "Plp1", "Myl9")
+plot_dims(sce, x = "Dim1", y = "Dim2", var = genes)
+```
+
+## Principal component gene weights
+
+Extract genes from different principal components to check for biological processes that are defined in principal components. Done in two steps: 
+1. Extracting gene weights from sce_object
+2. Saving weights with genes in ascending order per principal component
+
+Extract gene weight for all principal components
+500 is the amount of genes we selecte to do the PCA analysis on
+```{r}
+rv <- rowVars(assay(sce))
+selected_genes <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))]#500 is the amount of highest variable genes to include
+pca <- prcomp(t(assay(sce)[selected_genes,]))
+pca_loadings <- as.data.frame(pca$rotation)
+pca_loadings[order(pca_loadings[,1], decreasing = TRUE),]
+write.csv(pca_loadings, filename)#fill in filename
+```
