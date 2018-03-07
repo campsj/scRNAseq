@@ -1,116 +1,26 @@
 ---
-title: "Clustering with SC3"
-author: "Jordi Camps"
-date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+title: "Customized heatmaps"
 output: html_document
 ---
 
-# Load libraries
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+library(SingleCellExperiment)
+library(pheatmap)
+library(scTools)
+library(plyr)
 library(SC3)
-library(scater)
 library(RColorBrewer)
 library(viridis)
-library(SingleCellExperiment)
-library(grid)
-library(BiocGenerics)
-library(scTools)
-library(dplyr)
-library(lazyeval)
-library(tidyr)
-library(scran)
-library(pheatmap)
-library(plyr)
-options(stringsAsFactors = FALSE)
 ```
 
-## Import dataset
 ```{r}
-set.seed(1234567)
-sce <- readRDS("data/reads_qc.rds")
-endog_genes <- !rowData(sce)$is_feature_control
-sce <- sce[endog_genes, ]
+sce <- readRDS("data/1moWTB_reads_qc_scran_SC3.rds")
+sce$sc3_4_clusters <- revalue(sce$sc3_4_clusters, c("1" = "FAP/MAB", "2" = "Schwann cells", "3" = "Satellite cells", "4" = "Smooth muscle cells"))
 ```
 
-## Normalize for library size
-```{r}
-qclust <- quickCluster(reads_qc, min.size = 30)
-reads_qc <- computeSumFactors(reads_qc, clusters = qclust)
-reads_qc <- computeSpikeFactors(reads_qc, general.use = FALSE)
-summary(sizeFactors(reads_qc))
-sce <- normalize(reads_qc)
-```
-
-# Clustering
-## SC3
-```{r, message = FALSE, warning=FALSE}
-sce <- sc3_prepare(sce)
-sce <- sc3_estimate_k(sce)
-metadata(sce)$sc3$k_estimation
-sce <- sc3(sce, ks = 2:11, biology = TRUE, n_cores = 4)
-```
-
-## SC3 interactive
-Check dataset interactively online
-```{r eval=FALSE, include=FALSE}
-sc3_interactive(sce)
-```
-
-### Save to rds
-```{r}
-saveRDS(sce, "data/reads_qc_scran_sc3.rds")
-```
-
-## Export results
-### Export results to excel
-**Install perl on your computer to use this function!**
-```{r}
-sc3_export_results_xls(sce)
-```
-
-### Export csv with all differentially expressed genes
-k = 4
-```{r}
-sc3_plot_de_genes(sce, k = 4, show_pdata = TRUE)
-
-sce %>%
-  rowData() %>%
-  as_tibble() %>%
-  filter(sc3_4_de_padj < 0.01) %>%
-  select(feature_symbol, ensembl_gene_id, sc3_4_markers_auroc, sc3_4_markers_clusts, sc3_4_de_padj) %>%
-  arrange(sc3_4_de_padj) %>%
-  write.csv("tables/k4_de_genes.csv")
-```
-
-## Plot results
-## Export principal components and tSNE dimensions in reduced dim
-```{r fig.height=10, fig.width=10}
-sce = plotPCA(sce, ncomponents = 4, colour_by = "sc3_9_clusters", return_SCE = TRUE)
-sce$PC1 <- reducedDim(sce)[,1]
-sce$PC2 <- reducedDim(sce)[,2]
-sce$PC3 <- reducedDim(sce)[,3]
-sce$PC4 <- reducedDim(sce)[,4]
-
-sce <- plotTSNE(sce, colour_by = "sc3_9_clusters", return_SCE = TRUE, perplexity = 20, exprs_values = "logcounts")
-sce$Dim1 <- reducedDims(sce)$TSNE[,1]
-sce$Dim2 <- reducedDims(sce)$TSNE[,2]
-```
-
-## Plot clusters on PCA and tSNE
-```{r}
-plot_dims(sce, "PC2", "PC3", "sc3_4_clusters")
-plot_dims(sce, "Dim1", "Dim2", "sc3_4_clusters")
-```
-
-## Plot expression of clusters
-```{r}
-genes <- c("Dcn", "Cd82", "Plp1", "Myl9")
-plot_expression(sce, genes, "sc3_4_clusters")
-```
-
-## Plot heatmap
 SC3 functions
+
 ```{r}
 make_col_ann_for_heatmaps <- function(object, show_pdata) {
     if (any(!show_pdata %in% colnames(colData(object)))) {
@@ -168,7 +78,10 @@ make_col_ann_for_heatmaps <- function(object, show_pdata) {
     }
     return(ann)
 }
+```
 
+
+```{r}
 organise_marker_genes <- function(object, k, p_val, auroc) {
     dat <- rowData(object)[, c(paste0("sc3_", k, "_markers_clusts"), paste0("sc3_", k, 
         "_markers_auroc"), paste0("sc3_", k, "_markers_padj"), "feature_symbol")]
@@ -186,7 +99,10 @@ organise_marker_genes <- function(object, k, p_val, auroc) {
     
     return(d)
 }
+```
 
+
+```{r}
 markers_for_heatmap <- function(markers) {
     res <- NULL
     for (i in unique(markers[, 1])) {
@@ -201,6 +117,9 @@ markers_for_heatmap <- function(markers) {
     return(res)
 }
 ```
+
+
+
 
 ```{r fig.height=10, fig.width=10}
 #plot_markers_trial <- function(object, k, auroc = 0.85, p.val = 0.01, show_pdata = NULL) {
@@ -266,13 +185,76 @@ markers_for_heatmap <- function(markers) {
 #}
 ```
 
-## Save RDS
+
+# Satellite cells
 ```{r}
-saveRDS(sce, file = "data/reads_qc_scran_SC3.rds")
+sce_muSC <- sce[ , sce$sc3_4_clusters == "Satellite cells"]
+sce_muSC <- sc3_prepare(sce_muSC)
+sce_muSC <- sc3_estimate_k(sce_muSC)
+metadata(sce_muSC)$sc3$k_estimation
+sce_muSC <- sc3(sce_muSC, ks = 4, biology = TRUE, n_cores = 1)
 ```
 
-# Session info
 ```{r}
-sessionInfo()
-```
+#plot_markers_trial <- function(object, k, auroc = 0.85, p.val = 0.01, show_pdata = NULL) {
+  if (is.null(metadata(sce)$sc3$consensus)) {
+    warning(paste0("Please run sc3_consensus() first!"))
+    return(sce_muSC)
+  }
+  hc <- metadata(sce_muSC)$sc3$consensus[[as.character(4)]]$hc
+  dataset <- get_processed_dataset(sce_muSC)
+  if (!is.null(metadata(sce_muSC)$sc3$svm_train_inds)) {
+    dataset <- dataset[, metadata(sce_muSC)$sc3$svm_train_inds]
+  }
 
+  add_ann_col <- FALSE
+  ann <- NULL
+  if (!is.null("genotype")) {
+    ann <- make_col_ann_for_heatmaps(sce_muSC, "genotype")
+    if (!is.null(ann)) {
+      add_ann_col <- TRUE
+      # make same names for the annotation table
+      rownames(ann) <- colnames(dataset)
+    }
+  }
+
+  # get all marker genes
+  markers <- organise_marker_genes(sce_muSC, 4, 0.05, 0.85)
+  # get top 10 marker genes of each cluster
+  markers <- markers_for_heatmap(markers)
+
+  row.ann <- data.frame(clust_num = factor(markers[, 1], levels = unique(markers[, 1])))
+  clust_names <- data.frame(clust_num = 1:4, Cluster = c("Quiescent SC", "Activated SC", "Myoblast", "Dystrophic SC"))
+  row.ann <- merge(row.ann, clust_names, by = "clust_num")
+  row.ann <- row.ann["Cluster"]
+  #row.ann <- data.frame(Cluster = sce_muSC$sc3_4_clusters)
+  rownames(row.ann) <- markers$feature_symbol
+
+  mat_colors <- list(Cluster = brewer.pal(4, "Set3"), genotype = c("#e41a1c", "#377eb8"))
+  names(mat_colors$Cluster) <- unique(row.ann$Cluster)
+  names(mat_colors$genotype) <- unique(ann$genotype)
+  #names(Cluster) <- c("FAP/MAB", "Satellite cells", "Schwann cells", "Smooth muscle cells")
+  #anno_colors <- list(Cluster = Cluster)
+
+  do.call(pheatmap::pheatmap, c(list(dataset[markers$feature_symbol, , drop = FALSE],
+                                     color = colorRampPalette(rev(brewer.pal(n = 11, name = "RdYlBu")))(100),
+                                     show_colnames = FALSE,
+                                     cluster_rows = FALSE, 
+                                     cluster_cols = hc, 
+                                     cutree_cols = 4, 
+                                     annotation_row = row.ann, 
+                                     annotation_names_row = FALSE, 
+                                     #gaps_row = which(diff(markers[, 1]) != 0), 
+                                     cellheight = 20,
+                                     cellwidth = 2,
+                                     treeheight_col = 0),
+                                     list(annotation_col = ann)[add_ann_col], 
+                                     list(annotation_colors = mat_colors, 
+                                     annotation_legend = TRUE,
+                                     fontsize.row = 28,
+                                     filename = "plots/heatmap/muSC.pdf",
+                                     width = 5,
+                                     height = 8
+                                     )))
+#}
+```

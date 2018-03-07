@@ -33,11 +33,21 @@ Only for balanced design:
 ### 5. Clustering with SC3
 + Perform clustering with SC3
 + Check clusters online
-+ Plot PCA with sc3 clusters
-+ Filter marker genes and plot them on PCA
++ Plot PCA and tSNE with sc3 clusters
++ Plot expression of clusters
++ Make adjusted heatmaps
 
-### 6. PCA analysis
+### 6. PCA and tSNE analysis
 + Export gene weights in principal components
++ Plot PCA and tSNE
++ Plot gene expression on PCA and tSNE
+
+### 7. SCENIC
++ Gene regulatory network analysis
+
+### 8. PSEUDOTIME
++ TSCAN
++ SLICER
 
 ## To do
-+ Add script for pseudotime
++ Automate functions for easy analysis
