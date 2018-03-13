@@ -1,0 +1,95 @@
+---
+title: "SCRAT"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+## Load libraries
+```{r}
+library(SingleCellExperiment)
+library(som)
+library(pixmap)
+library(fdrtool)
+library(scrat)
+library(RColorBrewer)
+```
+
+## Prepare data
+```{r}
+sce <- readRDS("data/reads_qc_scran_sc3.rds")
+logcounts <- logcounts(sce)
+```
+
+## Assign groups and colors
+```{r}
+SOM.assign <- as.character(sce$sc3_4_clusters)
+SOM.color <- brewer.pal(4, "Set1")
+```
+
+## Select for genecode genes only
+```{r eval=FALSE, include=FALSE}
+gencode<-read.table("gencode.v22.annotation.protein_coding_gene_name.txt",header=T)
+gencode.list<-as.character(gencode$gene_id)
+gencode.genes<-intersect(gencode.list,colnames(df))
+df<-df[,gencode.genes]
+```
+
+## Apply a variance cutoff
+```{r}
+logcounts<-logcounts[,which(apply(logcounts,2,var)>1)]
+logcounts<-logcounts[,which(colSums(logcounts>0)>2 & colSums(logcounts>5)<nrow(logcounts))]
+logcounts<-t(logcounts)
+```
+
+## Set up the environment
+```{r}
+env <- scrat.new(
+  list(
+    dataset.name = "lineage",
+    dim.1stLvlSom = 50,
+    dim.2ndLvlSom = 20,
+    training.extension = 1,
+    rotate.SOM.portraits = 0,
+    flip.SOM.portraits = F,
+    database.dataset = "auto",
+    database.id.type = "auto",
+    geneset.analysis = T,
+    geneset.analysis.exact = F,
+    spot.coresize.modules = 3,
+    spot.threshold.modules = 0.95,
+    spot.coresize.groupmap = 5,
+    spot.threshold.groupmap = 0.75,
+    pseudotime.estimation = list(
+    n.waypoints = 20,
+    n.iterations = 20,
+    k = 30,
+    I = 5,
+    initiator.sample = 1 ),
+    feature.centralization = T,
+    sample.quantile.normalization = T,
+    pairwise.comparison.list = list() 
+  ) 
+)
+```
+
+## Load input data into environment
+```{r}
+env$indata <- logcounts
+```
+
+## Define sample groups
+```{r}
+env$group.labels <- SOM.assign
+```
+
+## Define sample colors
+```{r}
+env$group.colors <- SOM.color
+```
+
+## Pipeline execution
+```{r}
+scrat.run(env)
+```
+
