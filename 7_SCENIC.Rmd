@@ -1,0 +1,940 @@
+---
+title: "Scenic"
+author: "Jordi Camps"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+dir.create("int")
+dir.create("output")
+options(stringsAsFactors = FALSE)
+library(BiocGenerics)
+library(SingleCellExperiment)
+```
+
+# Step 1: inferring potential TF targets based on co-expression
+## Load and filter data
+### Load expression matrix
+```{r}
+sce <- readRDS("data/reads_qc_scran_sc3.rds")
+exprMat <- counts(sce)
+dim(exprMat)
+```
+
+### Save cell information
+```{r}
+cellInfo <- colData(sce)[colnames(exprMat), "sc3_4_clusters", drop = F]
+colVars <- list(sc3_4_clusters=setNames(c("forestgreen", "darkorange", "magenta4", "hotpink"), 
+                                        c("FAP/MAB", "Schwann cells", "Satellite cells", "Smooth muscle cells")))
+save(colVars, file="data/colVars.Rdata")
+plot.new(); legend(0,1, fill=colVars$sc3_4_clusters, legend=names(colVars$sc3_4_clusters))
+```
+
+### Select organism
+```{r}
+org <- "mm9"
+if(org=="hg19")
+{
+  library(RcisTarget.hg19.motifDatabases.20k)
+  
+  # Get genes in databases:
+  data(hg19_500bpUpstream_motifRanking) # or 10kbp, they should have the same genes
+  genesInDatabase <- hg19_500bpUpstream_motifRanking@rankings$rn
+  
+  # Get TFS in databases:
+  data(hg19_direct_motifAnnotation)
+  allTFs <- hg19_direct_motifAnnotation$allTFs
+}
+
+if(org=="mm9")
+{
+  library(RcisTarget.mm9.motifDatabases.20k)
+  
+  # Get genes in databases:
+  data(mm9_500bpUpstream_motifRanking) # or 10kbp, they should have the same genes
+  genesInDatabase <- mm9_500bpUpstream_motifRanking@rankings$rn
+  
+  # Get TFS in databases:
+  data(mm9_direct_motifAnnotation)
+  allTFs <- mm9_direct_motifAnnotation$allTFs
+}
+```
+
+### Gene filter/selection
+Dataset already filtered aforehand
+```{r}
+nCellsPerGene <- apply(exprMat, 1, function(x) sum(x>0))
+nCountsPerGene <- apply(exprMat, 1, sum)
+summary(nCellsPerGene)
+summary(nCountsPerGene)
+max(exprMat)
+sum(exprMat>0) / sum(exprMat==0)
+```
+
+Remove genes with less than 70 counts (equivalent of 20 counts expressed in 1% of the total cells)
+```{r}
+minReads <- 20*.01*ncol(exprMat)
+genesLeft_minReads <- names(nCountsPerGene)[which(nCountsPerGene > minReads)]
+length(genesLeft_minReads)
+```
+
+
+Remove genes that are epxressed in less than 1% of the cells
+```{r}
+minSamples <- ncol(exprMat)*.01
+nCellsPerGene2 <- nCellsPerGene[genesLeft_minReads]
+genesLeft_minCells <- names(nCellsPerGene2)[which(nCellsPerGene2 > minSamples)]
+length(genesLeft_minCells)
+```
+
+```{r}
+genesLeft_minCells_inDatabases <- genesLeft_minCells[which(genesLeft_minCells %in% genesInDatabase)]
+length(genesLeft_minCells_inDatabases)
+```
+
+Filter expression matrix
+```{r}
+exprMatrix_filtered <- exprMat[genesLeft_minCells_inDatabases, ]
+save(exprMatrix_filtered, file="int/1.1_exprMatrix_filtered.RData")
+```
+
+Check whether any relevant gene/potential gene of interest is missing:
+```{r}
+interestingGenes <- c("Pax7", "Sox10", "Ly6a", "Gdf10", "Alpl")
+interestingGenes[which(!interestingGenes %in% rownames(exprMatrix_filtered))]
+```
+
+```{r}
+rm(exprMat)
+```
+
+### Potential regulators: list of transcription factors
+```{r}
+inputTFs <- allTFs[allTFs%in% rownames(exprMatrix_filtered)]
+save(inputTFs, file="int/1.2_inputTFs.RData")
+
+c(allTFs=length(allTFs), inputTFs=length(inputTFs))
+```
+
+## GENIE3
+```{r}
+# setwd("")
+load("int/1.1_exprMatrix_filtered.RData")
+# Optional: add log (if it is not logged already)
+exprMatrix_filtered <- log2(exprMatrix_filtered+1) 
+load("int/1.2_inputTFs.RData")
+library(GENIE3)
+```
+
+### Run GENIE3
+```{r}
+set.seed(123)
+weightMatrix <- GENIE3(exprMatrix_filtered, regulators=inputTFs, nCores=4)
+save(weightMatrix, file="int/1.3_GENIE3_weightMatrix.RData")
+```
+
+### Correlation
+```{r}
+load("int/1.1_exprMatrix_filtered.RData")
+corrMat <- cor(t(exprMatrix_filtered), method="spearman")
+save(corrMat, file="int/1.4_corrMat.RData")
+```
+
+## Create co-expression modules
+### Load output from GENIE3
+```{r}
+library(GENIE3)
+# Convert the weight matrix into links:
+load("int/1.3_GENIE3_weightMatrix.RData")
+linkList <- getLinkList(weightMatrix, threshold=0.001) # (slighly faster)
+# linkList <- getLinkList(weightMatrix)
+colnames(linkList) <- c("TF", "Target", "weight")
+# order by weight
+linkList <- linkList[order(linkList[,"weight"], decreasing=TRUE),]
+save(linkList, file="int/1.5_GENIE3_linkList.RData")
+```
+
+```{r}
+load("int/1.5_GENIE3_linkList.RData")
+dim(linkList)
+head(linkList)
+```
+
+### Creating TF-modules (potential TF-targets)
+#### Building gene-sets
+```{r}
+quantile(linkList$weight, probs=c(0.75, 0.90))
+plot(linkList$weight[1:1000000], type="l", ylim=c(0, max(linkList$weight)), main="Weight of the links",
+     ylab="Weight", xlab="Links sorted decreasingly")
+abline(h=0.001, col="blue") # Threshold
+sum(linkList$weight>0.001)/nrow(linkList)
+```
+
+```{r}
+linkList_001 <- linkList[which(linkList[,"weight"]>0.001),]
+# Number of links over the threshold: 
+nrow(linkList_001) 
+```
+
+Create gene-sets and save
+```{r}
+tfModules <- list()
+
+linkList_001$TF <- as.character(linkList_001$TF)
+linkList_001$Target <- as.character(linkList_001$Target)
+  
+#### Create TF-modules:
+# 1: Weight > 0.001 (filtered in previous step) 
+tfModules[["w001"]] <- split(linkList_001$Target, factor(linkList_001$TF))
+
+# 2: Weight > 0.005
+llminW <- linkList_001[which(linkList_001[,"weight"]>0.005),]
+tfModules[["w005"]] <- split(llminW$Target, factor(llminW$TF))
+
+# 3: Top 50 targets for each TF
+# ("w001" should be ordered decreasingly by weight)
+tfModules[["top50"]] <- lapply(tfModules[["w001"]], function(x) x[1:(min(length(x), 50))])
+
+# 4-6: Top regulators per target 
+# (linkList_001 should be ordered by weight!)
+linkList_001_byTarget <- split(linkList_001, factor(linkList_001$Target))
+save(linkList_001_byTarget, file="int/1.5_linkList_001_byTarget.RData")
+
+nTopTfs <- c(5, 10, 50)
+nTopTfs <- setNames(nTopTfs, paste("top", nTopTfs, "perTarget", sep=""))
+
+library(reshape2); library(data.table)
+topTFsperTarget <- lapply(linkList_001_byTarget, function(llt) {
+   nTFs <- nTopTfs[which(nTopTfs <= nrow(llt))]
+   melt(lapply(nTFs, function(x) llt[1:x,"TF"]))
+})
+topTFsperTarget <- topTFsperTarget[which(!sapply(sapply(topTFsperTarget, nrow), is.null))]
+topTFsperTarget.asDf <-  data.frame(rbindlist(topTFsperTarget, idcol=TRUE))
+head(topTFsperTarget.asDf)
+colnames(topTFsperTarget.asDf) <- c("Target", "TF", "method")
+
+# Merge the all the gene-sets:
+tfModules.melted <- melt(tfModules)
+colnames(tfModules.melted) <- c("Target", "TF", "method")
+tfModules <- rbind(tfModules.melted, topTFsperTarget.asDf)
+
+save(tfModules, file="int/1.6_tfModules.RData")
+```
+
+```{r}
+load("int/1.6_tfModules.RData")
+# Basic counts:
+rbind(nGeneSets=nrow(tfModules), 
+      nTFs=length(unique(tfModules$TF)), 
+      nTargets=length(unique(tfModules$Target)))
+```
+
+#### Split into positive- and negative-correlated targets
+Split TF targets according to correlation
+```{r}
+load("int/1.4_corrMat.RData")
+# Keep only correlation between TFs and potential targets
+tfs <- unique(tfModules$TF)
+corrMat <- corrMat[tfs,]
+
+# Split TF modules according to correlation
+tfModules_byTF <- split(tfModules, factor(tfModules$TF))
+tfModules_withCorr_byTF <- lapply(tfModules_byTF, function(tfGeneSets)
+{
+    tf <- unique(tfGeneSets$TF)
+    targets <- tfGeneSets$Target
+    cbind(tfGeneSets, corr=c(as.numeric(corrMat[tf,targets] > 0.03) - as.numeric(corrMat[tf,targets] < -0.03)))
+})
+tfModules_withCorr <- data.frame(rbindlist(tfModules_withCorr_byTF))
+save(tfModules_withCorr, file="int/1.7_tfModules_withCorr.RData")
+```
+
+```{r}
+load("int/1.7_tfModules_withCorr.RData")
+head(tfModules_withCorr)
+dim(tfModules_withCorr)
+```
+
+# Step 2: identifying regulons (direct TF targets) based on DNA motif enrichment
+## Load gene sets
+```{r}
+load("int/1.7_tfModules_withCorr.RData")
+
+# Remove genes missing from RcisTarget databases
+#  (In case the input matrix wasn't already filtered)
+tfModules_withCorr <- tfModules_withCorr[which(as.character(tfModules_withCorr$TF) %in% allTFs),]
+geneInDb <- tfModules_withCorr$Target %in% genesInDatabase
+# Genes in co-expression modules not available in RcisTargetDatabases:
+missingGenes <- sort(unique(tfModules_withCorr[which(!geneInDb),"Target"]))
+missingGenes
+tfModules_withCorr <- tfModules_withCorr[which(geneInDb),]
+    
+# Targets with positive correlation
+tfModules_Selected <- tfModules_withCorr[which(tfModules_withCorr$corr==1),]
+
+# Add a column with the geneSet name (TF_method)
+tfModules_Selected <- cbind(tfModules_Selected, geneSetName=paste(tfModules_Selected$TF, tfModules_Selected$method, sep="_"))
+head(tfModules_Selected)
+
+# Split into tfModules (TF-modules, with several methods)
+tfModules <- split(tfModules_Selected$Target, tfModules_Selected$geneSetName)
+
+# Keep gene sets with at least 20 genes
+tfModules <- tfModules[which(lengths(tfModules)>=20)]
+
+# Add TF to the gene set (used in the following steps, careful if editing)
+tfModules <- setNames(lapply(names(tfModules), function(gsn) {
+    tf <- strsplit(gsn, "_")[[1]][1]
+    unique(c(tf, tfModules[[gsn]]))
+    }), names(tfModules))
+save(tfModules, file="int/2.1_tfModules_forMotifEnrichmet.RData")
+```
+
+```{r}
+load("int/2.1_tfModules_forMotifEnrichmet.RData")
+tfModulesSummary <- t(sapply(strsplit(names(tfModules), "_"), function(x) x[1:2]))
+sort(table(tfModulesSummary[,2]))
+```
+
+## Motif enrichment analysis & identifying direct targets
+### Motif databases
+```{r}
+org <- "mm9"
+if(org=="hg19")
+{
+    library(RcisTarget.hg19.motifDatabases.20k)
+    
+    # Motif rankings (genes x motifs)
+    data(hg19_500bpUpstream_motifRanking)
+    data(hg19_10kbpAroundTss_motifRanking)
+    motifRankings <- list()
+    motifRankings[["500bp"]] <- hg19_500bpUpstream_motifRanking
+    motifRankings[["10kbp"]] <- hg19_10kbpAroundTss_motifRanking
+    
+    # Motif annotation (TFs)
+    data(hg19_direct_motifAnnotation)
+    direct_motifAnnotation <- hg19_direct_motifAnnotation
+    data(hg19_inferred_motifAnnotation) # optional
+    inferred_motifAnnotation <- hg19_inferred_motifAnnotation
+}
+
+if(org=="mm9")
+{
+    library(RcisTarget.mm9.motifDatabases.20k)
+    
+    # Motif rankings (genes x motifs)
+    data(mm9_500bpUpstream_motifRanking)
+    data(mm9_10kbpAroundTss_motifRanking)
+    motifRankings <- list()
+    motifRankings[["500bp"]] <- mm9_500bpUpstream_motifRanking
+    motifRankings[["10kbp"]] <- mm9_10kbpAroundTss_motifRanking
+    
+    # Motif annotation (TFs)
+    data(mm9_direct_motifAnnotation)
+    direct_motifAnnotation <- mm9_direct_motifAnnotation
+    data(mm9_inferred_motifAnnotation) # optional
+    inferred_motifAnnotation <- mm9_inferred_motifAnnotation
+}
+```
+
+### Run RCisTarget
+```{r}
+library(RcisTarget)
+################################################################
+# 1. Calculate motif enrichment for each TF-module
+
+### 1.1 Calculate enrichment
+motifs_AUC <- lapply(motifRankings, function(ranking) calcAUC(tfModules, ranking, aucMaxRank=0.01*nrow(ranking@rankings), nCores=4, verbose=FALSE))
+save(motifs_AUC, file="int/2.2_motifs_AUC_500bp_10kbp.RData")
+
+### 1.2 Conver to table, filter by NES & add the TFs to which the motif is annotated
+# (For each database...)
+motifEnrichment <- lapply(motifs_AUC, function(aucOutput)
+{
+  # Extract the TF of the gene-set name (i.e. MITF_w001):
+  tf <- sapply(setNames(strsplit(rownames(aucOutput), "_"), rownames(aucOutput)), function(x) x[[1]])
+  
+  # Calculate NES and add motif annotation (provide tf in 'highlightTFs'):
+  addMotifAnnotation(aucOutput, highlightTFs=tf, nesThreshold=3.0, digits=3,
+                  motifAnnot_direct=direct_motifAnnotation,
+                  motifAnnot_inferred=inferred_motifAnnotation)
+})
+
+# Merge both tables, adding a column that contains the 'motifDb' 
+motifEnrichment <- do.call(rbind, lapply(names(motifEnrichment), function(dbName){
+  cbind(motifDb=dbName, motifEnrichment[[dbName]])
+}))
+save(motifEnrichment, file="int/2.3_motifEnrichment.RData")
+cat("Number of motifs in the initial enrichment: ", nrow(motifEnrichment))
+
+### 1.3 Keep only the motifs annotated to the initial TF
+motifEnrichment_selfMotifs <- motifEnrichment[which(motifEnrichment$TFinDB != ""),, drop=FALSE]
+save(motifEnrichment_selfMotifs, file="int/2.4_motifEnrichment_selfMotifs.RData")
+cat("Number of motifs annotated to the initial TF: ", nrow(motifEnrichment_selfMotifs))
+rm(motifEnrichment)
+
+################################################################
+# 2. Prune targets
+
+motifEnrichment_selfMotifs_wGenes <- lapply(names(motifRankings), function(motifDbName){
+  addSignificantGenes(resultsTable=motifEnrichment_selfMotifs[motifDb==motifDbName],
+                      geneSets=tfModules,
+                      rankings=motifRankings[[motifDbName]],
+                      maxRank=5000, method="aprox", nCores=4)
+  })
+
+library(data.table)
+motifEnrichment_selfMotifs_wGenes <- rbindlist(motifEnrichment_selfMotifs_wGenes)
+save(motifEnrichment_selfMotifs_wGenes, file="int/2.5_motifEnrichment_selfMotifs_wGenes.RData")
+
+# Save as text:
+write.table(motifEnrichment_selfMotifs_wGenes, file="output/Step2_MotifEnrichment.tsv", 
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+```{r}
+load("int/2.5_motifEnrichment_selfMotifs_wGenes.RData")
+dim(motifEnrichment_selfMotifs_wGenes)
+```
+
+```{r}
+motifEnrichment_selfMotifs_wGenes[order(NES,decreasing=TRUE)][1:5,-"enrichedGenes", with=F]
+```
+
+### Format regulons
+```{r}
+library(data.table)
+motifEnrichment.asIncidList <- apply(motifEnrichment_selfMotifs_wGenes, 1, function(oneMotifRow) {
+  genes <- strsplit(oneMotifRow["enrichedGenes"], ";")[[1]]
+  oneMotifRow <- data.frame(rbind(oneMotifRow), stringsAsFactors=FALSE)
+  data.frame(oneMotifRow[rep(1, length(genes)),c("NES", "motif", "highlightedTFs", "TFinDB")], genes, stringsAsFactors = FALSE)
+})
+motifEnrichment.asIncidList <- rbindlist(motifEnrichment.asIncidList)
+colnames(motifEnrichment.asIncidList) <- c("NES", "motif", "TF", "annot", "gene")
+motifEnrichment.asIncidList <- data.frame(motifEnrichment.asIncidList, stringsAsFactors = FALSE)
+
+# Get targets for each TF, but keep info about best motif/enrichment 
+# (directly annotated motifs are considered better)
+regulonTargetsInfo <- lapply(split(motifEnrichment.asIncidList, motifEnrichment.asIncidList$TF), function(tfTargets){
+  # print(unique(tfTargets$TF))
+  tfTable <- as.data.frame(do.call(rbind, lapply(split(tfTargets, tfTargets$gene), function(enrOneGene){
+    directAnnot <- "**" %in% enrOneGene$annot
+    enrOneGeneByAnnot <- enrOneGene
+    if(directAnnot) enrOneGeneByAnnot <- enrOneGeneByAnnot[which(enrOneGene$annot == "**"),]
+    bestMotif <- which.max(enrOneGeneByAnnot$NES)
+    
+    cbind(TF=unique(enrOneGene$TF), gene=unique(enrOneGene$gene), nMotifs=nrow(enrOneGene), 
+          bestMotif=as.character(enrOneGeneByAnnot[bestMotif,"motif"]), NES=as.numeric(enrOneGeneByAnnot[bestMotif,"NES"]), 
+          directAnnot=directAnnot)
+  })), stringsAsFactors=FALSE)
+  tfTable[order(tfTable$NES, decreasing = TRUE),]
+})
+regulonTargetsInfo <- rbindlist(regulonTargetsInfo)
+colnames(regulonTargetsInfo) <- c("TF", "gene", "nMotifs", "bestMotif", "NES", "directAnnot")
+
+# Optional: Add Genie3 score
+load("int/1.5_GENIE3_linkList.RData")
+linkList <- linkList[which(linkList$weight>=0.001),]
+rownames(linkList) <- paste(linkList$TF, linkList$Target,sep="__")
+regulonTargetsInfo <- cbind(regulonTargetsInfo, Genie3Weight=linkList[paste(regulonTargetsInfo$TF, regulonTargetsInfo$gene,sep="__"),"weight"])
+
+save(regulonTargetsInfo, file="int/2.6_regulonTargetsInfo.RData")
+write.table(regulonTargetsInfo, file="output/Step2_regulonTargetsInfo.txt", sep="\t", col.names=TRUE, row.names=FALSE, quote=FALSE)
+```
+
+```{r}
+regulonTargetsInfo_splitByAnnot <- split(regulonTargetsInfo, regulonTargetsInfo$directAnnot)
+regulons <- sapply(split(regulonTargetsInfo_splitByAnnot[["TRUE"]], regulonTargetsInfo_splitByAnnot[["TRUE"]][,"TF"]), function(x) sort(as.character(unlist(x[,"gene"]))))
+regulons_extended <- sapply(split(regulonTargetsInfo_splitByAnnot[["FALSE"]],regulonTargetsInfo_splitByAnnot[["FALSE"]][,"TF"]), function(x) unname(x[,"gene"]))
+regulons_extended <- sapply(names(regulons_extended), function(tf) sort(unique(c(regulons[[tf]], regulons_extended[[tf]]))))
+names(regulons_extended) <- paste(names(regulons_extended), "_extended", sep="")
+regulons <- c(regulons, regulons_extended)
+save(regulons, file="int/2.6_regulons_asGeneSet.RData")
+```
+
+```{r}
+load("int/2.6_regulons_asGeneSet.RData")
+# Number of regulons and summary of sizes:
+length(regulons)
+summary(lengths(regulons))
+```
+
+### Incidence matrix (i.e. network)
+```{r}
+incidList <- melt(regulons)
+incidMat <- table(incidList[,2], incidList[,1])
+save(incidMat, file="int/2.6_regulons_asIncidMat.RData")
+dim(incidMat)
+```
+
+## Exploring regulons
+### How many TFs are self-regulating?
+```{r}
+table(sapply(names(regulons), function(x) x %in% regulons[[x]]))
+```
+
+### Motifs associated to a TF (i.e. MITF regulons):
+```{r}
+selTF <- "Dlx5"
+subsetTable <- motifEnrichment_selfMotifs_wGenes[highlightedTFs %in% selTF][order(NES,decreasing=TRUE)][,-"enrichedGenes", with=F]
+
+subsetTable <- addLogo(subsetTable)
+```
+
+```{r}
+library(DT)
+datatable(subsetTable, escape=FALSE, filter="top", options=list(pageLength=5))
+```
+
+### Gene enrichment plots
+```{r}
+geneSetName <- "Dlx5_top50"
+motifDbName <- "10kbp"
+selectedMotifs <- subsetTable[geneSet==geneSetName & motifDb==motifDbName, motif]
+selectedMotifs <- selectedMotifs[1:3]
+```
+
+```{r}
+# pdf("int/2.8_RCC_selectedMotifs.pdf")
+par(mfrow=c(2,2))
+signifGenes_SelectedMotifs <- getSignificantGenes(tfModules[[geneSetName]], 
+                                        motifRankings[[motifDbName]],
+                                        signifRankingNames=selectedMotifs,
+                                        plotCurve=TRUE, maxRank=5000, nCores=4, 
+                                        genesFormat="geneList", method="aprox")
+```
+
+
+# Step 3 Analyzing the network activity in each individual cell
+## Part 1: Network activity in each cell
+### Load regulons & expression matrix
+```{r}
+sce <- readRDS("data/reads_qc_scran_sc3.rds")
+exprMat <- counts(sce)
+dim(exprMat)
+```
+
+```{r}
+load("data/colVars.RData")
+cellInfo <- pData(exprMat)[,names(colVars), drop=F]
+```
+
+```{r}
+cellInfo <- colData(sce)[colnames(exprMat), "sc3_4_clusters", drop = F]
+colVars <- list(sc3_4_clusters=setNames(c("forestgreen", "darkorange", "magenta4", "hotpink"), 
+                                        c("FAP/MAB", "Schwann cells", "Satellite cells", "Smooth muscle cells")))
+save(colVars, file="data/col.Vars.Rdata")
+plot.new(); legend(0,1, fill=colVars$sc3_4_clusters, legend=names(colVars$sc3_4_clusters))
+```
+
+```{r}
+load("int/2.6_regulons_asGeneSet.RData")
+regulons <- regulons[order(lengths(regulons), decreasing=TRUE)]
+regulons <- regulons[lengths(regulons)>=10]
+
+# Add the TF & rename
+regulons <- setNames(lapply(names(regulons), function(tf) sort(unique(c(gsub("_extended", "", tf), regulons[[tf]])))), names(regulons))
+names(regulons) <- paste(names(regulons), " (",lengths(regulons), "g)", sep="")
+save(regulons, file="int/3.0_regulons_forAUCell.RData")
+length(regulons)
+```
+
+```{r}
+cbind(names(regulons)[1:10])
+```
+
+### AUCell
+
+```{r}
+library(AUCell)
+#library(doMC)
+# 1. Create rankings
+aucellRankings <- AUCell.buildRankings(exprMat, nCores=4, plotStats=TRUE)
+abline(v=aucellRankings@nGenesDetected["1%"], col="skyblue3", lwd=5, lty=3)
+save(aucellRankings, file="int/3.1_aucellRankings.RData")
+
+# 2. Calculate AUC
+regulonAUC <- AUCell.calcAUC(regulons, aucellRankings, aucMaxRank=aucellRankings@nGenesDetected["1%"], nCores=10)
+save(regulonAUC, file="int/3.2_regulonAUC.RData")
+```
+
+```{r}
+load("int/3.2_regulonAUC.RData")
+# Order the modules by similarity, for easier exploration in the upcoming steps & save
+variableRegulons <- names(which(apply(getAuc(regulonAUC), 1, sd) > 0))
+reguDist <-as.dist(1-cor(t(getAuc(regulonAUC)[variableRegulons,]), method="spear"))
+reguClust <- hclust(reguDist, method="ward.D2")
+regulonClusters <- setNames(dynamicTreeCut::cutreeDynamic(reguClust, distM=as.matrix(reguDist), verbose = FALSE), reguClust$labels)
+regulonOrder <- reguClust$labels[reguClust$order]
+regulonOrder <- regulonOrder[order(regulonClusters[regulonOrder], decreasing = TRUE)]
+regulonAUC@matrix <- regulonAUC@matrix[regulonOrder,]
+save(regulonAUC, file="int/3.2_regulonAUC.RData")
+
+# Export as text (optional):
+# write.table(regulonAUC@AUC, file="output/Step3_RegulonActivity_AUC.tsv", sep="\t", quote=FALSE, col.names=NA)
+```
+
+#### Overview of cell states according to module activity (tSNE on AUC)
+
+```{r}
+library(SCENIC)
+# (It is recommended to try different perplexity values)
+regulonAUC_subset <- subset(regulonAUC, onlyNonDirectExtended(rownames(regulonAUC)))
+
+# PCA-based t-SNE
+set.seed(123)
+tsneAUC <- Rtsne::Rtsne(t(getAuc(regulonAUC_subset)), initial_dims=10, perplexity=10)
+rownames(tsneAUC$Y) <- colnames(regulonAUC_subset)
+colnames(tsneAUC$Y) <- c("tsne1", "tsne2")
+save(tsneAUC, file="int/3.3_tsneRegulonAUC_PCA.RData")
+
+# Alternative: Distance-based t-SNE:
+corDist <- as.dist(1-cor(getAuc(regulonAUC_subset)))
+set.seed(123)
+tsneAUC <- Rtsne::Rtsne(corDist, is_distance=TRUE, perplexity=10)
+rownames(tsneAUC$Y) <- labels(corDist)
+colnames(tsneAUC$Y) <- c("tsne1", "tsne2")
+save(tsneAUC, file="int/3.3_tsneRegulonAUC_Dist.RData")
+```
+
+
+```{r}
+load("int/3.3_tsneRegulonAUC_PCA.RData")
+tSNE <- tsneAUC$Y
+par(mfrow=c(1,2))
+
+# Number of genes detected:
+nGenesPerCell <- apply(exprMat, 2, function(x) sum(x>0))
+colorPal <- grDevices::colorRampPalette(c("darkgreen", "yellow","red"))
+cellColorNgenes <- setNames(adjustcolor(colorPal(10), alpha=.8)[as.numeric(cut(nGenesPerCell,breaks=10, right=F,include.lowest=T))], names(nGenesPerCell))
+
+plot(tSNE, col=cellColorNgenes[rownames(tSNE)], pch=16, main="nGenes", sub="t-SNE on regulon activity (AUC)")
+
+# Other known properties:
+for(varName in names(colVars))
+{
+  cellColor <- setNames(colVars[[varName]][cellInfo[,varName]], rownames(cellInfo))
+  plot(tSNE, col=cellColor[rownames(tSNE)], pch=16, main=varName, sub="t-SNE on regulon activity (AUC)")
+}
+```
+
+#### Plot AUC histograms
+
+```{r}
+Cairo::CairoPDF("output/Step3_RegulonActivity_AUCtSNE.pdf", width=20, height=5)
+par(mfrow=c(1,4))
+
+# tSNE (colored by number of genes detected per cell)
+plot(tSNE, col=cellColorNgenes[rownames(tSNE)], pch=16, main="nGenes", sub="t-SNE on regulon activity (AUC)")
+plot(tSNE, col=cellColor[rownames(tSNE)], pch=16, main=varName, sub="t-SNE on regulon activity (AUC)")
+plot.new(); plot.new()
+
+# Plot module activity, thresholds & assignment:
+cells_AUCellThresholds <- plot_aucTsne(tSNE=tSNE, exprMat=exprMat, regulonAUC=regulonAUC, alphaOff=0.1)
+dev.off()
+save(cells_AUCellThresholds, file="int/3.4_AUCellThresholds.RData")
+```
+
+```{r}
+load("int/3.4_AUCellThresholds.RData")
+
+# Get cells assigned to each regulon
+regulonsCells <- lapply(cells_AUCellThresholds, function(x) x$assignment)
+
+### Save threshold info as text (e.g. to edit/modify...)
+trhAssignment <- sapply(cells_AUCellThresholds, function(x) unname(x$aucThr$selected))
+commentsThresholds <- sapply(cells_AUCellThresholds, function(x) unname(x$aucThr$comment))
+
+table2edit <- cbind(regulon=names(trhAssignment), 
+                    threshold=trhAssignment, 
+                    nCellsAssigned=lengths(regulonsCells)[names(trhAssignment)],
+                    AUCellComment=commentsThresholds, 
+                    nGenes=gsub("[\\(g\\)]", "", regmatches(names(cells_AUCellThresholds), gregexpr("\\(.*?\\)", names(cells_AUCellThresholds)))),
+                    clusteringOrder=1:length(trhAssignment), 
+                    clusterGroup=regulonClusters[names(trhAssignment)], 
+                    onlyNonDirectExtended=(names(trhAssignment) %in% onlyNonDirectExtended(names(trhAssignment))),
+                    personalNotes="")
+write.table(table2edit, file="int/3.5_1_AUCellThresholds.txt", row.names=F, quote=F, sep="\t")
+```
+
+
+## Part2: Create the binary activity matrix
+#### Read the new thresholds
+```{r}
+manualThresholds <- read.table("int/3.5_2_AUCellThresholds_EDITED.txt", sep="\t", header=T)
+newThresholds <- setNames(manualThresholds[,"threshold"], manualThresholds[,"regulon"])
+length(newThresholds)
+```
+
+```{r}
+any(is.na(as.numeric(newThresholds)))
+newThresholds  <- setNames(as.numeric(newThresholds), names(newThresholds))
+save(newThresholds, file="int/3.5_3_newThresholds.RData")
+```
+
+#### Get the cells that have each regulon active with the new thresholds
+```{r}
+sce <- readRDS("data/reads_qc_scran_sc3.rds")
+exprMat <- counts(sce)
+load("int/3.5_3_newThresholds.RData")
+load("int/3.3_tsneRegulonAUC_PCA.RData"); tSNE <- tsneAUC$Y
+load("int/3.2_regulonAUC.RData")
+
+Cairo::CairoPDF("output/Step3_RegulonActivity_AUCtSNE_newThresholds.pdf", width=20, height=5)
+par(mfrow=c(1,4))
+newAssignment <- plot_aucTsne(exprMat, regulonAUC=regulonAUC, tSNE=tSNE, thresholds=newThresholds)
+dev.off()
+save(newAssignment, file="int/3.5_4_newAssignment.RData")
+```
+
+### Binary regulon activity matrix (Active regulons per cell)
+#### Create matrix
+```{r}
+load("int/3.4_AUCellThresholds.RData")
+load("int/3.5_4_newAssignment.RData")
+cells_AUCellThresholds <- newAssignment
+rm(newAssignment)
+```
+
+```{r}
+# Get cells assigned to each regulon
+regulonsCells <- lapply(cells_AUCellThresholds, function(x) x$assignment)
+length(regulonsCells)
+```
+
+```{r}
+# Conver to matrix (regulons with zero assigned cells are lost)
+regulonActivity <- reshape2::melt(regulonsCells)
+binaryRegulonActivity <- t(table(regulonActivity[,1], regulonActivity[,2]))
+class(binaryRegulonActivity) <- "matrix"
+save(binaryRegulonActivity, file="int/3.6_BinaryRegulonActivity.RData")
+
+dim(binaryRegulonActivity)
+```
+
+```{r}
+binaryRegulonActivity[1:10,1:3]
+```
+
+```{r}
+binaryRegulonActivity_nonDupl <- binaryRegulonActivity[which(rownames(binaryRegulonActivity) %in% onlyNonDirectExtended(rownames(binaryRegulonActivity))),]
+save(binaryRegulonActivity_nonDupl, file="int/3.7_binaryRegulonActivity_nonDupl.RData")
+```
+
+#### Matrix overview
+```{r}
+cbind(nCellsOn=sort(rowSums(binaryRegulonActivity), decreasing=TRUE)[1:15])
+```
+
+```{r}
+par(mfrow=c(1,2))
+boxplot(rowSums(binaryRegulonActivity_nonDupl), main="nCells per regulon", 
+        sub='number of cells \nthat have the regulon active',
+        col="darkolivegreen1", border="#001100", lwd=2, frame=FALSE)
+boxplot(colSums(binaryRegulonActivity_nonDupl), main="nRegulons per Cell", 
+        sub='number of regulons \nactive per cell',
+        col="darkolivegreen1", border="#001100", lwd=2, frame=FALSE)
+```
+
+#### Heatmap
+```{r}
+load("data/colVars.Rdata")
+sce <- readRDS("data/reads_qc_scran_sc3.rds")
+exprMat <- counts(sce)
+cellInfo <- colData(sce)[,names(colVars), drop=F]
+cellInfo$sc3_4_clusters <- revalue(cellInfo$sc3_4_clusters, c("1" = "FAP/MAB", "2" = "Schwann cells", "3" = "Satellite cells", "4" = "Smooth muscle cells"))
+
+minCells <- ncol(sce) * .01
+```
+
+```{r}
+load("int/3.6_BinaryRegulonActivity.RData")
+load("int/3.7_binaryRegulonActivity_nonDupl.RData")
+
+regulonSelection <- list()
+
+# All regulons.
+regulonSelection[["All regulons \n (including duplicated regulons)"]] <- rownames(binaryRegulonActivity)
+
+# Active in > 1% cells
+regMinCells <- names(which(rowSums(binaryRegulonActivity_nonDupl) > minCells))
+regulonSelection[["Regulons active in more than 1% of cells"]] <- regMinCells
+
+# Correlation across regulons (based on binary cell activity)
+reguCor <- cor(t(binaryRegulonActivity_nonDupl[regMinCells,]))
+diag(reguCor) <- 0
+
+# Regulons that co-ocurr in similar cells. If a regulon is relevant by itself it will not be shown, also check the regulons ignored.
+corrRegs <- names(which(rowSums(abs(reguCor) > 0.30) > 0))
+regulonSelection[["Regulons with any other regulon correlated\n with abs(cor)>0.30 \n(and active in at least 1% of cells)"]]  <- corrRegs
+
+missingRegs <- rownames(binaryRegulonActivity_nonDupl)[which(!rownames(binaryRegulonActivity_nonDupl) %in% corrRegs)]
+regulonSelection[["Regulons no other regulons correlated\n with abs(cor)>0.30 \n or active in fewer than 1% of cells"]]  <- missingRegs
+
+save(regulonSelection,file="int/3.8_regulonSelections.RData")
+
+## Set regulon order (for plotting)
+binaryRegulonOrder <- hclust(as.dist(1-reguCor[corrRegs,corrRegs]))
+binaryRegulonOrder <- binaryRegulonOrder$labels[binaryRegulonOrder$order]
+save(binaryRegulonOrder,file="int/3.9_binaryRegulonOrder.RData")
+```
+
+```{r}
+for(i in seq_len(length(regulonSelection)))
+{
+  selRegs <- names(regulonSelection)[i]
+  if(length(selRegs)==1)
+  {
+      binaryMat <- binaryRegulonActivity[regulonSelection[[selRegs]],,drop=FALSE]
+      NMF::aheatmap(binaryMat, scale="none", revC=TRUE, main=selRegs,
+                    annCol=as.character(cellInfo[colnames(binaryMat),, drop=FALSE]$sc3_4_clusters),
+                    annColor=colVars,
+                    color = c("white", "black"),
+                    filename=paste0("output/Step3.3_binaryRegulonActivity_Heatmap_",i,".pdf"))
+   }
+}
+```
+
+# Step 4: Identifying stable cell states based on the gene-regulatory network activity
+## Load cell info and binary activity matrix
+```{r}
+sce <- readRDS("data/reads_qc_scran_sc3.rds")
+exprMat <- counts(sce)
+dim(exprMat)
+load("data/colVars.Rdata")
+cellInfo <- colData(sce)[,names(colVars), drop=F]
+
+#load("int/cellColorNgenes.RData")
+nGenesPerCell <- apply(exprMat, 2, function(x) sum(x>0))
+colorPal <- grDevices::colorRampPalette(c("darkgreen", "yellow","red"))
+cellColorNgenes <- setNames(adjustcolor(colorPal(10), alpha=.8)[as.numeric(cut(nGenesPerCell,breaks=10, right=F,include.lowest=T))], names(nGenesPerCell))
+
+load("int/3.7_binaryRegulonActivity_nonDupl.RData")
+tBinaryAct <- t(binaryRegulonActivity_nonDupl)
+```
+
+## Calculate t-SNE on the binary regulon activity
+```{r}
+library(Rtsne)
+
+##################################
+# PCA based t-SNE
+set.seed(123)
+tBinaryAct_jitter <- jitter(tBinaryAct, factor=1)
+tsneBinaryActivity_PCA <- Rtsne(tBinaryAct_jitter, initial_dims=5, perplexity=30)
+rownames(tsneBinaryActivity_PCA$Y) <- rownames(tBinaryAct_jitter)
+colnames(tsneBinaryActivity_PCA$Y) <- c("tsne2", "tsne1")
+tsneBinaryActivity_PCA$Y <- tsneBinaryActivity_PCA$Y[,c("tsne1", "tsne2")]
+save(tsneBinaryActivity_PCA, file="int/4.1_tsneBinaryActivity_5PC.RData")
+
+##################################
+# PCA based t-SNE
+set.seed(123)
+tBinaryAct_jitter <- jitter(tBinaryAct, factor=1)
+tsneBinaryActivity_PCA <- Rtsne(tBinaryAct_jitter, initial_dims=50, perplexity=30)
+rownames(tsneBinaryActivity_PCA$Y) <- rownames(tBinaryAct_jitter)
+colnames(tsneBinaryActivity_PCA$Y) <- c("tsne2", "tsne1")
+tsneBinaryActivity_PCA$Y <- tsneBinaryActivity_PCA$Y[,c("tsne1", "tsne2")]
+save(tsneBinaryActivity_PCA, file="int/4.1_tsneBinaryActivity_50PC.RData")
+
+##################################
+# Distance-based t-SNE
+corDist <- as.dist(1-cor(t(tBinaryAct)))
+set.seed(123)
+tsneBinaryActivity_Dist <- Rtsne(corDist, is_distance=TRUE, perplexity=30)
+rownames(tsneBinaryActivity_Dist$Y) <- labels(corDist)
+colnames(tsneBinaryActivity_Dist$Y) <- c("tsne1", "tsne2")
+save(tsneBinaryActivity_Dist, file="int/4.1_tsneBinaryActivity_Dist.RData")
+```
+
+## Plot t-SNEs
+### Coloured by cell properties
+```{r}
+#library(Cairo)
+tSNEs_binary <- list()
+load("int/4.1_tsneBinaryActivity_Dist.RData")
+tSNEs_binary[["Dist"]] <- tsneBinaryActivity_Dist$Y
+load("int/4.1_tsneBinaryActivity_5PC.RData")
+tSNEs_binary[["5PC"]] <- tsneBinaryActivity_PCA$Y
+load("int/4.1_tsneBinaryActivity_50PC.RData")
+tSNEs_binary[["50PC"]] <- tsneBinaryActivity_PCA$Y
+
+for(tsneName in names(tSNEs_binary))
+{
+    tSNE_binary <- tSNEs_binary[[tsneName]]
+    
+    # Density
+    library(KernSmooth)
+    library(RColorBrewer)
+    dens2d <- bkde2D(tSNE_binary, 1)$fhat
+    
+    Cairo::CairoPDF(paste0("output/Step4.1_tsneModuleActivity_",tsneName,".pdf"), width=15, height=5)
+    par(mfrow=c(1,3))
+    # nGenes
+    plot(tSNE_binary, col=cellColorNgenes[rownames(tSNE_binary)], pch=16)
+    # density
+    image(dens2d, col=brewer.pal(9, "YlOrBr"), axes=FALSE)
+    contour(dens2d, add=TRUE, nlevels=5, drawlabels=FALSE)
+    
+    # Known phenotype:
+    if(!is.null(cellInfo))
+    {
+        nVars <- ncol(cellInfo)
+        for(varName in colnames(cellInfo))
+        {
+            cellColor <- setNames(colVars[[varName]][as.character(cellInfo[,varName])], 
+                                  rownames(cellInfo))
+            plot(tSNE_binary, col=cellColor[rownames(tSNE_binary)], pch=16, 
+                 main=varName, sub="t-SNE on Binary regulon activity",
+                 xlab="", ylab="",axes = FALSE)
+        }
+    }
+    # legend(10, 25, names(colVars[[varName]]), fill=colVars[[varName]], cex=.7, bty="n")
+    for(i in seq_len(3 - ((nVars+2) %% 3))) # fill remaining slots in page
+    {
+        plot.new()
+    }
+    dev.off()
+}
+```
+
+### Coloured by regulon activity
+```{r}
+# Choose a t-SNE
+load("int/4.1_tsneBinaryActivity_50PC.RData")  
+tSNE_binary <- tsneBinaryActivity_PCA$Y
+tSNEname <- "tsneBinaryActivity_50PC"
+
+# Load...
+load("int/3.6_BinaryRegulonActivity.RData")
+load("int/3.9_binaryRegulonOrder.RData")
+load("int/3.2_regulonAUC.RData")
+load("int/3.4_AUCellThresholds.RData")
+```
+
+```{r}
+library(SCENIC)
+regOrder<- binaryRegulonOrder[which(binaryRegulonOrder %in% rownames(tBinaryAct))]
+Cairo::CairoPDF(paste0("output/Step4.2_",tSNEname,"_BinaryRegulons.pdf"), width=20, height=15)
+par(mfrow=c(4,6))
+cells_trhAssignment <- plot_aucTsne(tSNE=tSNE_binary, exprMat=exprMat,
+    regulonAUC=t(tBinaryAct)[binaryRegulonOrder,], cex=1.5, plots="binary", thresholds=0)
+dev.off()
+
+regOrder<- binaryRegulonOrder[which(binaryRegulonOrder %in% rownames(regulonAUC))]
+Cairo::CairoPDF(paste0("output/Step4.2_",tSNEname,"_AUCRegulons.pdf"), width=20, height=15)
+par(mfrow=c(4,6))
+cells_trhAssignment <- plot_aucTsne(tSNE=tSNE_binary, exprMat=exprMat, 
+    regulonAUC=regulonAUC[regOrder,], cex=1.5, plots="AUC", thresholds=0)
+dev.off()
+
+Cairo::CairoPDF(paste0("output/Step4.2_",tSNEname,"_allPlots.pdf"), width=20, height=5)
+par(mfrow=c(1,4))
+cells_trhAssignment <- plot_aucTsne(tSNE=tSNE_binary, exprMat=exprMat, 
+        regulonAUC=regulonAUC[regOrder,],
+        alphaOff=0.1, thresholds=cells_AUCellThresholds[regOrder])
+dev.off()
+```
+
