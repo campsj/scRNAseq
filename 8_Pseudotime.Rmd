@@ -108,3 +108,55 @@ plotExpression(sce, "Myf5", x = "pseudotime_slicer",
                colour_by = "cluster", show_violin = FALSE,
                show_smooth = TRUE)
 ```
+
+# SCORPIUS
+```{r}
+library(SCORPIUS)
+library(BiocGenerics)
+expression <- as.data.frame(t(logcounts(sce_muSC)))
+expression
+group_name <- sce_muSC$sc3_4_clusters
+```
+
+```{r}
+dist <- correlation_distance(expression)
+dim(dist)
+plot(density(dist))
+```
+
+
+```{r}
+#reduce dimensionality
+library(ggplot2)
+space <- reduce_dimensionality(dist)
+draw_trajectory_plot(space, group_name)
+draw_trajectory_plot(space[, c(1, 3)], group_name) + labs(y = "Component 3")
+draw_trajectory_plot(space[, c(2, 3)], group_name) + labs(x = "Component 2", y = "Component 3")
+```
+
+Infer trajectory
+```{r}
+traj <- infer_trajectory(space)
+draw_trajectory_plot(space, progression_group = group_name, path = traj$path)
+```
+
+## Finding candidate markers
+```{r}
+gimp <- gene_importances(expression, traj$time, num_permutations = 0, num_threads = 8)
+gene_sel <- gimp[1:50,]
+expr_sel <- expression[,gene_sel$gene]
+```
+
+```{r}
+traj <- infer_trajectory(expr_sel)
+```
+
+```{r}
+draw_trajectory_heatmap(expr_sel, traj$time, group_name)
+```
+
+```{r}
+modules <- extract_modules(scale_quantile(expr_sel), traj$time, verbose = F)
+draw_trajectory_heatmap(expr_sel, traj$time, group_name, modules)
+```
+
