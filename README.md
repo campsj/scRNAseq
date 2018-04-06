@@ -48,6 +48,10 @@ Only for balanced design:
 ### 8. PSEUDOTIME
 + TSCAN
 + SLICER
++ SCORPIUS
+
+### 9. SCRAT
++ Pipeline for interactome analysis with Single-Cell R analysis toolkot of Treutlein lab
 
 ## To do
 + Automate functions for easy analysis
