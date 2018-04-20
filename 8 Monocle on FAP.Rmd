@@ -1,0 +1,657 @@
+---
+title: "8_Monocle"
+author: "Jordi Camps"
+date: "2018 M04 9"
+output: html_document
+---
+
+```{r}
+library(monocle)
+library(SingleCellExperiment)
+library(scran)
+library(reshape2)
+library(dplyr)
+```
+
+```{r}
+sce <- readRDS("data/reads_qc_scran_sc3_SCs.rds")
+# separate satellite cells and fap/mab
+fap <- sce[, sce$sc3_2_clusters == 1]
+#musc <- sce[, sce$sc3_2_clusters == 2]
+```
+
+Convert to CellDataSet
+Doesn't convert appropriately, many gene names are missing
+```{r eval=FALSE, include=FALSE}
+cds <- convertTo(fap, type = "monocle", col.fields = c("marker", "genotype"), row.fields = c("ensembl_gene_id", "mgi_symbol", "transcript_biotype"))
+featureData(cds)$gene_short_name <- fData(cds)$ensembl_gene_id
+```
+# Make newCellDataSet
+```{r eval=FALSE, include=FALSE}
+cnts <- counts(fap)
+geneNames <- rownames(fap)
+colnames(cnts) <- 1:ncol(cnts)
+rownames(cnts) <- 1:nrow(cnts)
+pd <- data.frame(genotype = fap$genotype, Cell = colnames(fap))
+pd <- new("AnnotatedDataFrame", data=pd)
+fd <- data.frame(gene_short_name = geneNames, feature_id = rowData(fap)$feature_id)
+fd <- new("AnnotatedDataFrame", data=fd)
+
+cds <- newCellDataSet(cnts, phenoData = pd, featureData = fd, lowerDetectionLimit = 0.1, expressionFamily = tobit(Lower = 0.1))
+rpc_matrix <- relative2abs(cds, method = "num_genes")
+
+cds <- newCellDataSet(as(as.matrix(rpc_matrix), "sparseMatrix"),
+                phenoData = pd,
+                featureData = fd,
+                lowerDetectionLimit = 0.5,
+                expressionFamily = negbinomial.size())
+rownames(cds) <- fData(cds)$feature_id
+colnames(cds) <- pData(cds)$Cell
+```
+
+```{r}
+cds <- estimateSizeFactors(cds)
+cds <- estimateDispersions(cds)
+```
+
+```{r}
+cds <- detectGenes(cds, min_expr = 0.1)
+print(head(fData(cds)))
+```
+
+```{r}
+cds <- detectGenes(cds, min_expr = 0.1)
+print(head(fData(cds)))
+expressed_genes <- row.names(subset(fData(cds),
+    num_cells_expressed >= 10))
+```
+
+```{r}
+print(head(pData(cds)))
+```
+
+```{r}
+pData(cds)$Total_mRNAs <- Matrix::colSums(exprs(cds))
+
+cds <- cds[,pData(cds)$Total_mRNAs < 1e6]
+
+upper_bound <- 10^(mean(log10(pData(cds)$Total_mRNAs)) +
+            2*sd(log10(pData(cds)$Total_mRNAs)))
+lower_bound <- 10^(mean(log10(pData(cds)$Total_mRNAs)) -
+            2*sd(log10(pData(cds)$Total_mRNAs)))
+
+qplot(Total_mRNAs, data = pData(cds), color = genotype, geom =
+"density") +
+geom_vline(xintercept = lower_bound) +
+geom_vline(xintercept = upper_bound)
+```
+
+```{r}
+cds <- cds[,pData(cds)$Total_mRNAs > lower_bound &
+      pData(cds)$Total_mRNAs < upper_bound]
+cds <- detectGenes(cds, min_expr = 0.1)
+```
+
+```{r}
+# Log-transform each value in the expression matrix.
+L <- log(exprs(cds[expressed_genes,]))
+
+# Standardize each gene, so that they are all on the same scale,
+# Then melt the data with plyr so we can plot it easily
+melted_dens_df <- melt(Matrix::t(scale(Matrix::t(L))))
+
+# Plot the distribution of the standardized gene expression values.
+qplot(value, geom = "density", data = melted_dens_df) +
+stat_function(fun = dnorm, size = 0.5, color = 'red') +
+xlab("Standardized log(FPKM)") +
+ylab("Density")
+```
+
+
+# Classifying cells with known marker genes
+```{r}
+cth <- newCellTypeHierarchy()
+
+Ly6a_id <- row.names(subset(fData(cds), gene_short_name == "Ly6a"))
+Pdgfra_id <- row.names(subset(fData(cds), gene_short_name == "Pdgfra"))
+
+
+cth <- addCellType(cth, "MAB/FAP", classify_func = function(x) {x[Ly6a_id, ] >= 1 | x[Pdgfra_id, ] >= 1})
+
+cds <- classifyCells(cds, cth)
+```
+
+```{r}
+table(pData(cds)$CellType)
+```
+
+```{r}
+pie <- ggplot(pData(cds), aes(x = factor(1), fill = factor(CellType))) + geom_bar(width = 1)
+pie + coord_polar(theta = "y") +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+```
+
+# Clustering cells using marker genes
+only one celltype defined by marker genes so clustering won't yield any positive results
+```{r}
+marker_diff <- markerDiffTable(cds[expressed_genes,],
+            cth,
+            residualModelFormulaStr = "~genotype + num_genes_expressed",
+            cores = 1)
+```
+
+```{r}
+candidate_clustering_genes <-
+    row.names(subset(marker_diff, qval < 0.05))
+marker_spec <-
+  calculateMarkerSpecificity(cds[candidate_clustering_genes,], cth)
+head(selectTopMarkers(marker_spec, 3))
+```
+
+# Clustering cells without marker genes
+```{r}
+disp_table <- dispersionTable(cds)
+unsup_clustering_genes <- subset(disp_table, mean_expression >= 0.1)
+cds <- setOrderingFilter(cds, unsup_clustering_genes$gene_id)
+plot_ordering_genes(cds)
+```
+
+```{r}
+# HSMM@auxClusteringData[["tSNE"]]$variance_explained <- NULL
+plot_pc_variance_explained(cds, return_all = F) # norm_method='log'
+```
+
+```{r}
+cds <- reduceDimension(cds, max_components = 2, num_dim = 6,
+                reduction_method = 'tSNE', verbose = T)
+cds <- clusterCells(cds, num_clusters = 2)
+plot_cell_clusters(cds, 1, 2, color = "CellType",
+    markers = c("Ly6a", "Pdgfra"))
+```
+
+Component one defines heterogeneity between FAP/MAB and non FAP/MAB cells
+Component two defines heterogeneity between genotypes
+```{r}
+plot_cell_clusters(cds, 1, 2, color = "CellType")
+```
+
+# Constructing single cell trajectories
+subset data set to only MAB/FAP
+```{r}
+cds_fap <- cds[, cds$CellType == "MAB/FAP"]
+```
+
+
+```{r}
+diff_test_res <- differentialGeneTest(cds_fap[expressed_genes,],
+              fullModelFormulaStr = "~genotype")
+ordering_genes <- row.names(subset(diff_test_res, qval < 0.05))
+```
+
+```{r}
+cds_fap <- setOrderingFilter(cds_fap, ordering_genes)
+plot_ordering_genes(cds_fap)
+```
+
+```{r}
+library(DDRTree)
+cds_fap <- reduceDimension(cds_fap, max_components = 2,
+    method = 'DDRTree')
+```
+
+```{r}
+cds_fap <- orderCells(cds_fap)
+```
+
+
+```{r}
+p <- plot_cell_trajectory(cds_fap, color_by = "genotype", cell_size = 6, cell_link_size = 1) +
+  theme_void() +
+  scale_color_tableau() +
+  theme(text = element_text(size = 20), legend.position = "top", legend.title = element_blank())
+p + ggsave("plots/pseudotime/FAP/genotype.tiff", width = 10, height = 11, units = "cm")
+```
+
+```{r}
+plot_cell_trajectory(cds_fap, color_by = "State") 
+```
+
+```{r}
+plot_cell_trajectory(cds_fap, color_by = "Pseudotime")
+```
+
+```{r}
+ggplot(pData(cds_fap), aes(x = Pseudotime, y = genotype, col = State)) +
+      geom_quasirandom(groupOnX = FALSE) +
+    scale_color_tableau() + theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+```{r}
+library(viridisLite)
+library(viridis)
+genes <- c("Gdf10", "Cd55", "Thbs4")
+gene_id <- which(fData(cds_fap)$gene_short_name %in% genes)
+gene_exprs <- as.data.frame(as.matrix(t(exprs(cds_fap)[gene_id, ])))
+colnames(gene_exprs) <- rev(genes)
+temp <- cbind(pData(cds_fap), gene_exprs)
+ggplot(temp, aes(x = Pseudotime, y = genotype, col = log2(Gdf10 + 1))) +
+      geom_quasirandom(groupOnX = FALSE) +
+    #scale_color_tableau() + 
+    #scale_color_continuous_tableau() +
+    scale_color_viridis(option = "inferno") +
+    theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+Plot genes on trajectory
+```{r}
+plot_cell_trajectory(cds_fap, color_by = "genotype", markers = "Gdf10", markers_linear = TRUE)
+plot_cell_trajectory(cds_fap, color_by = "genotype", markers = "Cd55", markers_linear = TRUE)
+plot_cell_trajectory(cds_fap, color_by = "genotype", markers = "Thbs4", markers_linear = TRUE)
+```
+
+
+
+Normalize cells from healthy mice (= State 1 and 3) as root state
+```{r}
+cds_fap <- orderCells(cds_fap, root_state = c(1, 3))
+
+plot_cell_trajectory(cds_fap, color_by = "Pseudotime")
+```
+
+```{r}
+ggplot(pData(cds_fap), aes(x = Pseudotime, y = genotype, col = State)) +
+      geom_quasirandom(groupOnX = FALSE) +
+    scale_color_tableau() + theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+```{r}
+library(viridisLite)
+library(viridis)
+genes <- c("Gdf10", "Cd55", "Thbs4")
+gene_id <- which(fData(cds_fap)$gene_short_name %in% genes)
+gene_exprs <- as.data.frame(as.matrix(t(exprs(cds_fap)[gene_id, ])))
+colnames(gene_exprs) <- rev(genes)
+temp <- cbind(pData(cds_fap), gene_exprs)
+ggplot(temp, aes(x = Pseudotime, y = genotype, col = log2(Gdf10 + 1))) +
+      geom_quasirandom(groupOnX = FALSE) +
+    #scale_color_tableau() + 
+    #scale_color_continuous_tableau() +
+    scale_color_viridis(option = "inferno") +
+    theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+
+Check which state contains the most cells from the healthy muscle and put this as root_state. This doesn't make so much sense because these cell types are probably both root states.
+```{r eval=FALSE, include=FALSE}
+GM_state <- function(cds_fap){
+  if (length(unique(pData(cds_fap)$State)) > 1){
+    T0_counts <- table(pData(cds_fap)$State, pData(cds_fap)$genotype)[,"Healthy"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+cds_fap <- orderCells(cds_fap, root_state = GM_state(cds_fap))
+
+plot_cell_trajectory(cds_fap, color_by = "Pseudotime")
+```
+
+
+```{r}
+library(ggbeeswarm)
+library(ggthemes)
+ggplot(pData(cds_fap), aes(x = Pseudotime, y = genotype, col = genotype)) +
+      geom_quasirandom(groupOnX = FALSE) +
+    scale_color_tableau() + theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+```{r}
+ggplot(pData(cds_fap), aes(x = Pseudotime, y = genotype, col = State)) +
+      geom_quasirandom(groupOnX = FALSE) +
+    scale_color_tableau() + theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+
+Still work on selecting gene names!!!
+```{r}
+library(viridisLite)
+library(viridis)
+genes <- c("Gdf10", "Cd55", "Thbs4")
+gene_id <- which(fData(cds_fap)$gene_short_name %in% genes)
+gene_exprs <- as.data.frame(as.matrix(t(exprs(cds_fap)[gene_id, ])))
+colnames(gene_exprs) <- rev(genes)
+temp <- cbind(pData(cds_fap), gene_exprs)
+ggplot(temp, aes(x = Pseudotime, y = genotype, col = log2(Cd55 + 1))) +
+      geom_quasirandom(groupOnX = FALSE) +
+    #scale_color_tableau() + 
+    #scale_color_continuous_tableau() +
+    scale_color_viridis(option = "inferno") +
+    theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+
+## Ordering based on genes that differ between clusters
+```{r}
+cds_fap_cl <- detectGenes(cds_fap_cl, min_expr = 0.1)
+fData(cds_fap_cl)$use_for_ordering <-
+    fData(cds_fap_cl)$num_cells_expressed > 0.05 * ncol(cds_fap_cl)
+```
+
+```{r}
+plot_pc_variance_explained(cds_fap_cl, return_all = F)
+```
+
+```{r}
+cds_fap_cl <- reduceDimension(cds_fap_cl,
+                              max_components = 2,
+                              norm_method = 'log',
+                              num_dim = 4,
+                              reduction_method = 'tSNE',
+                              verbose = T)
+```
+
+```{r}
+cds_fap_cl <- clusterCells(cds_fap_cl, verbose = F)
+```
+
+```{r}
+plot_cell_clusters(cds_fap_cl, color_by = 'as.factor(Cluster)')
+plot_cell_clusters(cds_fap_cl, color_by = 'as.factor(genotype)')
+```
+
+```{r}
+plot_rho_delta(cds_fap_cl, rho_threshold = 2, delta_threshold = 4 )
+```
+
+```{r}
+cds_fap_cl <- clusterCells(cds_fap_cl,
+                 rho_threshold = 2,
+                 delta_threshold = 4,
+                 skip_rho_sigma = T,
+                 verbose = F)
+```
+
+```{r}
+plot_cell_clusters(cds_fap_cl, color_by = 'as.factor(Cluster)')
+plot_cell_clusters(cds_fap_cl, color_by = 'as.factor(genotype)')
+```
+
+```{r}
+clustering_DEG_genes <-
+    differentialGeneTest(cds_fap_cl[expressed_genes,],
+          fullModelFormulaStr = '~Cluster',
+          cores = 1)
+```
+
+```{r}
+cds_fap_cl_ordering_genes <-
+    row.names(clustering_DEG_genes)[order(clustering_DEG_genes$qval)][1:1000]
+
+cds_fap_cl <-
+    setOrderingFilter(cds_fap_cl,
+        ordering_genes = cds_fap_cl_ordering_genes)
+
+cds_fap_cl <-
+    reduceDimension(cds_fap_cl, method = 'DDRTree')
+
+cds_fap_cl <-
+    orderCells(cds_fap_cl)
+
+cds_fap_cl <-
+    orderCells(cds_fap_cl)
+
+plot_cell_trajectory(cds_fap_cl, color_by = "genotype")
+```
+
+```{r}
+plot_cell_trajectory(cds_fap_cl, color_by = "Cluster")
+```
+
+```{r}
+plot_cell_trajectory(cds_fap_cl, color_by = "Pseudotime")
+```
+
+
+# Differential expression
+## Basic differential expression
+```{r}
+marker_genes <- row.names(subset(fData(cds_fap),
+                   gene_short_name %in% c("Ly6a", "Pdgfra", "Lum",
+                                          "Gdf10", "Cd55", "Thbs1",
+                                          "Thbs2", "Thbs4", "Fbln7",
+                                          "Sgcb", "Plagl1", "Has1",
+                                          "Meox1", "Meox2", "Cd248",
+                                          "Peg3", "Pdgfrb", "H19",
+                                          "Ifi205b", "Dpt", "Srpx2")))
+```
+
+which genes are affected by switch to dystrophy
+```{r}
+diff_test_res <- differentialGeneTest(cds_fap[marker_genes,],
+                                      fullModelFormulaStr = "~genotype")
+
+# Select genes that are significant at an FDR < 10%
+sig_genes <- subset(diff_test_res, qval < 0.01)
+
+sig_genes[,c("gene_short_name", "pval", "qval")]
+```
+
+```{r}
+genes <- cds_fap[row.names(subset(fData(cds_fap),
+              gene_short_name %in% c("Ly6a", "Gdf10", "Thbs4", "Dpt"))),]
+plot_genes_jitter(genes, grouping = "genotype", ncol= 2)
+```
+
+## Finding Genes that Distinguish Cell Type or State 
+Find genes differeng expression between Sca1+ cells and Sca1-
+```{r}
+to_be_tested <- row.names(subset(fData(cds),
+              gene_short_name %in% c("Ly6a", "Pdgfra", "Fmod", "Tnmd")))
+cds_subset <- cds[to_be_tested,]
+```
+
+```{r}
+diff_test_res <- differentialGeneTest(cds_subset,
+                    fullModelFormulaStr = "~CellType")
+diff_test_res[,c("gene_short_name", "pval", "qval")]
+```
+
+```{r}
+plot_genes_jitter(cds_subset,
+                  grouping = "CellType",
+                  color_by = "CellType",
+                  nrow= 1,
+                  ncol = NULL,
+                  plot_trend = TRUE)
+```
+
+```{r}
+full_model_fits <-
+    fitModel(cds_subset,  modelFormulaStr = "~CellType")
+reduced_model_fits <- fitModel(cds_subset, modelFormulaStr = "~1")
+diff_test_res <- compareModels(full_model_fits, reduced_model_fits)
+diff_test_res
+```
+
+## Finding Genes that Change as a Function of Pseudotime 
+```{r}
+to_be_tested <- row.names(subset(fData(cds_fap),
+gene_short_name %in% c("Ly6a", "Pdgfra", "Gdf10", "Cd55", "Meox2", "Thbs2", "Thbs4", "Fbln7")))
+cds_subset <- cds_fap[to_be_tested,]
+```
+
+```{r}
+diff_test_res <- differentialGeneTest(cds_subset,
+fullModelFormulaStr = "~sm.ns(Pseudotime)")
+```
+
+```{r}
+diff_test_res[,c("gene_short_name", "pval", "qval")]
+```
+
+```{r}
+plot_genes_in_pseudotime(cds_subset, color_by = "Cluster")
+```
+
+## Clustering Genes by Pseudotemporal Expression Pattern 
+```{r fig.height=10, fig.width=10}
+diff_test_res <- differentialGeneTest(cds_fap[marker_genes,],
+              fullModelFormulaStr = "~sm.ns(Pseudotime)")
+sig_gene_names <- row.names(subset(diff_test_res, qval < 0.1))
+plot_pseudotime_heatmap(cds_fap[sig_gene_names,],
+                num_clusters = 4,
+                cores = 1,
+                show_rownames = T)
+```
+
+## Differential expression analysis between states
+```{r}
+diff_test_res <- differentialGeneTest(cds_fap[expressed_genes,],
+              fullModelFormulaStr = "~State")
+sig_genes <- subset(diff_test_res, qval < 0.01)
+
+sig_genes[,c("gene_short_name", "pval", "qval")]
+sig_genes <- arrange(sig_genes, qval)
+sig_genes
+```
+
+```{r fig.height=10, fig.width=10}
+plot_genes_violin(cds_fap[sig_genes$feature_id[1:20], ], grouping = "State", min_expr = 0.1, ncol = 3)
+```
+
+State 2: c("Postn", "Has1", "Thbs4", "Fbln7")
+State 1: c("Ackr3", "Anxa3", "Dpp4", "Cd55")
+State 3: c("Gdf10", "F3", "Mgp")
+```{r}
+cds_fap_subset <- cds_fap[, row.names(subset(pData(cds_fap),
+              State == 1 | State == 3))]
+genes <- c("Ly6a", "Pdgfra")
+to_be_tested <- cds_fap_subset[row.names(subset(fData(cds_fap),
+              gene_short_name %in% genes)),]
+plot_genes_violin(to_be_tested, grouping = "State", min_expr = 0.1, ncol = 2, color_by = "State") +
+  scale_fill_tableau() +
+  scale_fill_manual(values = c("#1f77b4", "#9467bd")) +
+  geom_boxplot(width = 0.1) +
+  theme_bw() +
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.ticks.x = element_blank(), axis.text.x = element_blank())
+  ggsave("plots/pseudotime/FAP/sca1_pdgfra.tiff", width = 7, height = 6, dpi = 600, units = "cm")
+  
+```
+
+```{r}
+genes <- c("Ly6a", "Pdgfra")
+gene_id <- which(fData(cds_fap)$gene_short_name %in% genes)
+gene_exprs <- as.data.frame(as.matrix(t(exprs(cds_fap)[gene_id, ])))
+colnames(gene_exprs) <- rev(genes)
+temp <- cbind(pData(cds_fap), gene_exprs)
+ggplot(temp, aes(x = State, fill = State, y = log2(Cd55 + 0.1))) +
+    geom_violin() +
+    facet_grid(genes ~.) +
+    #geom_quasirandom(groupOnX = FALSE) +
+    #scale_color_tableau() + 
+    #scale_color_continuous_tableau() +
+    #scale_color_viridis(option = "inferno") +
+    theme_classic() +
+    xlab("monocle pseudotime") + ylab("genotype") +
+    ggtitle("Cells ordered by monocle pseudotime")
+```
+
+
+
+```{r}
+genes <- c("Timp3")
+to_be_tested <- cds_fap[row.names(subset(fData(cds_fap),
+              gene_short_name %in% genes)),]
+plot_genes_violin(to_be_tested, grouping = "State", min_expr = 0.1, ncol = 1)
+```
+
+
+```{r}
+p <- plot_cell_trajectory(cds_fap, color_by = "State", markers = c("Anxa3", "Gdf10", "Thbs4"), markers_linear = FALSE, 
+                     use_color_gradient = TRUE, cell_size = 6, show_tree = TRUE, show_backbone = TRUE, cell_link_size = 1) +
+  #scale_color_gradient_tableau() +
+  scale_color_viridis(option = "magma", name = "Log10(Expr)", breaks = c(0, 1, 2), guide = guide_colorbar(ticks = FALSE, 
+                                                                                      nbin = 100,
+                                                                                      title.vjust = 0.9,
+                                                                                      barwidth = 1)) +
+  #scale_fill_continuous(guide = guide_colorbar(ticks = FALSE)) +
+  theme_void() +
+  theme(#legend.position = "bottom", 
+        legend.justification = c(0, 1),
+        text = element_text(size = 18),
+        strip.text.x = element_text(size = 30, face = "bold.italic"),
+        legend.title = element_text(vjust = 1))
+p + ggsave("plots/pseudotime/FAP/state_markers.tiff", width = 32, height = 11, units = "cm")
+```
+
+```{r}
+plot_cell_trajectory(cds_fap, color_by = "State", markers = c("Pdgfra", "Ly6a", "Sgcb"), markers_linear = FALSE, 
+                     use_color_gradient = TRUE, cell_size = 6, show_tree = TRUE, show_backbone = TRUE, cell_link_size = 1) +
+  #scale_color_tableau() +
+  #scale_size(range = c(0, 3)) +
+  scale_color_viridis(option = "magma", name = "Log10(Expr)", breaks = c(0, 1, 2), guide = guide_colorbar(ticks = FALSE, 
+                                                                                      nbin = 100,
+                                                                                      title.vjust = 0.9,
+                                                                                      barwidth = 1)) +
+  #scale_fill_continuous(guide = guide_colorbar(ticks = FALSE)) +
+  theme_void() +
+  theme(#legend.position = "bottom", 
+        legend.justification = c(0, 1),
+        text = element_text(size = 18),
+        strip.text.x = element_text(size = 30, face = "bold.italic"),
+        legend.title = element_text(vjust = 1))
+```
+
+```{r}
+cds_fap$timepoint <- cds_fap$genotype
+genes <- row.names(subset(fData(cds_fap),
+          gene_short_name %in% c("Mmp3", "Fbln7", "Thbs4", "Adamts4")))
+plot_genes_in_pseudotime(cds_fap[genes, ], color_by = "timepoint", ncol = 2) +
+  scale_color_tableau() +
+  theme_bw()
+```
+
+
+## Multifactorial differential expression analysis
+
+# analyzing branches in single-cell trajectories
+```{r}
+BEAM_res <- BEAM(cds_fap, branch_point = 1, cores = 1)
+BEAM_res <- BEAM_res[order(BEAM_res$qval),]
+BEAM_res <- BEAM_res[,c("gene_short_name", "pval", "qval")]
+```
+
+```{r fig.height=20, fig.width=20, paged.print=TRUE}
+plot_genes_branched_heatmap(cds_fap[row.names(subset(BEAM_res,
+                                          qval < 1e-4)),],
+                                          branch_point = 1,
+                                          num_clusters = 4,
+                                          cores = 1,
+                                          use_gene_short_name = T,
+                                          show_rownames = T)
+```
+
+```{r}
+branch_genes <- row.names(subset(fData(cds_fap),
+          gene_short_name %in% c("G0s2", "Cd200", "Cxcl5", "Gdf10", "Meox2")))
+plot_genes_branched_pseudotime(cds_fap[branch_genes,],
+                       branch_point = 1,
+                       color_by = "State",
+                       ncol = 2)
+```
+
