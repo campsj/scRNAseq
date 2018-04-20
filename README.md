@@ -46,6 +46,7 @@ Only for balanced design:
 + Gene regulatory network analysis
 
 ### 8. PSEUDOTIME
++ Monocle
 + TSCAN
 + SLICER
 + SCORPIUS
