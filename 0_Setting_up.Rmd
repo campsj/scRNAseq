@@ -26,8 +26,8 @@ devtools::install_github("campsj/scTools")
 
 ```{r}
 install.packages(c("R.utils", "data.table", "mixtools", "zoo", "DT", "NMF", "plotly", "Cairo", "rmarkdown", "doMC", 
-                   "doRNG", "doParallel", "foreach", "dynamicTreeCut", "rmarkdown", "knitr", "tidyverse", "stringi",
-                   "reshape2", "plyr"))
+                   "doRNG", "doParallel", "foreach", "dynamicTreeCut", "rmarkdown", "knitr",  "stringi",
+                   "reshape2", "plyr", "tidyverse"))
 ```
 
 # Install packages necessary for SCENIC
