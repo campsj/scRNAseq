@@ -9,8 +9,7 @@ output: html_document
 library(scater)
 library(knitr)
 library(SingleCellExperiment)
-library(dplyr)
-library(ggplot2)
+library(scran)
 options(stringsAsFactors = FALSE)
 ```
 
@@ -84,16 +83,19 @@ reads <- calculateQCMetrics(reads,
 
 # Cell quality control
 ## Total counts per cell
-```{r, fig.height=4.5, fig.width=6}
+```{r}
+# Change according to dataset
+counts_threshold <- 1e5
+
 hist(
   log(reads$total_counts),
   breaks = 50,
   main = "Reads per cell",
-  xlab = "log(Total Reads)"
+  xlab = "Total Reads"
 )
-abline(v = c(log(2e4), log(3e6)), col = "red")
+abline(v = counts_threshold, col = "red")
 
-filter_by_total_counts <- (reads$total_counts > 2e4 & reads$total_counts < 3e6)
+filter_by_total_counts <- reads$total_counts > counts_threshold
 
 knitr::kable(
   as.data.frame(table(filter_by_total_counts)),
@@ -105,16 +107,19 @@ knitr::kable(
 
 
 ## Detected genes per cell
-```{r, fig.height=4.5, fig.width=6}
+```{r}
+# Change according to dataset
+genes_threshold <- 1000
+
 hist(
   reads$total_features,
   breaks = 50,
   main = "Detected genes per cell",
   xlab = "Total genes"
 )
-abline(v = c(800, 3000), col = "red")
+abline(v = genes_threshold, col = "red")
 
-filter_by_expr_features <- (reads$total_features > 800 & reads$total_features < 3000)
+filter_by_expr_features <- reads$total_features > genes_threshold
 
 knitr::kable(
   as.data.frame(table(filter_by_expr_features)),
@@ -125,16 +130,19 @@ knitr::kable(
 ```
 
 ## mtDNA
-```{r, fig.height=4.5, fig.width=6}
+```{r}
+# Change according to dataset
+mt_threshold <- 10
+
 plotPhenoData(
   reads,
   aes_string(x = "total_features",
              y = "pct_counts_MT",
              colour = "batch")) +
-  geom_hline(yintercept = 10, col = "red") +
+  geom_hline(yintercept = mt_threshold, col = "red") +
   labs(x = "Total genes", y = "Percentage mitochondrial genes")
 
-filter_by_MT <- reads$pct_counts_MT < 10
+filter_by_MT <- reads$pct_counts_MT < mt_threshold
 knitr::kable(
   as.data.frame(table(filter_by_MT)),
   booktabs = TRUE,
@@ -146,12 +154,15 @@ knitr::kable(
 
 ## ERCC
 ```{r}
+# Change according to dataset
+ercc_threshold <- 25
+
 plotPhenoData(
   reads,
   aes_string(x = "total_features",
              y = "pct_counts_ERCC",
              colour = "batch")) +
-  geom_hline(yintercept = 25, col = "red") +
+  geom_hline(yintercept = ercc_threshold, col = "red") +
   labs(x = "Total genes", y = "Percentage ERCC") 
 
 plotPhenoData(
@@ -161,10 +172,10 @@ plotPhenoData(
              colour = "marker",
              shape = "genotype",
              size = 1)) +
-  geom_hline(yintercept = 25, col = "red") +
+  geom_hline(yintercept = ercc_threshold, col = "red") +
   labs(x = "Total genes", y = "Percentage ERCC") 
 
-filter_by_ERCC <- (reads$pct_counts_ERCC < 25)
+filter_by_ERCC <- (reads$pct_counts_ERCC < ercc_threshold)
 
 knitr::kable(
   as.data.frame(table(filter_by_ERCC)),
@@ -174,6 +185,17 @@ knitr::kable(
 )
 ```
 
+## Cell cycle
+```{r}
+mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
+assigned <- cyclone(reads, pairs=mm.pairs)
+head(assigned$scores)
+table(assigned$phases)
+table(assigned$phases, reads$marker, reads$genotype)
+
+
+filter_by_cell_cycle <- (assigned$phases == "G1")
+```
 
 # Cell filtering
 ## Manual filter
@@ -186,7 +208,9 @@ reads$use <- (
     # sufficient endogenous RNA
     filter_by_ERCC &
     # remove cells with unusual number of reads in MT genes
-    filter_by_MT
+    filter_by_MT &
+    # remove cells that are not in G1 phase
+    filter_by_cell_cycle
 )
 table(reads$use)
 ```
@@ -254,7 +278,7 @@ dim(reads[rowData(reads)$use, colData(reads)$use])
 ```
 
 ## Calculate raw logcounts
-```{r, fig.width=5.5, fig.height=4}
+```{r}
 assay(reads, "logcounts_raw") <- log2(counts(reads) + 1)
 reducedDim(reads) <- NULL
 ```
@@ -287,8 +311,8 @@ ggplot(temp, aes(x = col_XT, y = row_XT, col = marker, shape = genotype)) +
 
 ## Save to RDS file
 ```{r}
-saveRDS(reads, file ="data/13moWTB_reads.rds")
-saveRDS(reads_qc, file = "data/13moWTB_reads_qc.rds")
+saveRDS(reads, file ="data/reads.rds")
+saveRDS(reads_qc, file = "data/reads_qc.rds")
 ```
 
 # Visualization
