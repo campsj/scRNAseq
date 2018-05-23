@@ -1,0 +1,47 @@
+---
+title: "0_Setting_up"
+author: "Jordi Camps"
+date: "2018 M05 23"
+output: html_document
+---
+
+# Install Bioconductor
+```{r}
+source("https://bioconductor.org/biocLite.R")
+BiocInstaller::biocLite()
+BiocInstaller::biocLite(c("limma", "SingleCellExperiment", "Rhdf5lib", "beachmat", "scater", "scran", "RUVSeq", "sva", "SC3", "TSCAN", "monocle", "destiny", "DESeq2", "edgeR", "MAST", "scfind", "scmap", "MultiAssayExperiment", "SummarizedExperiment"))
+```
+
+# Install important R packages
+```{r}
+install.packages(c("rmarkdown", "knitr", "tidyverse", "devtools"))
+devtools::install_github("campsj/scTools")
+install.packages(c("R.utils", "utils", "graphics", "stats", "data.table", "mixtools", "GSEABase", 
+"SummarizedExperiment", "methods", "Biobase", "zoo", "DT", "NMF", "plotly", "Cairo",
+"BiocStyle", "rmarkdown", "doMC", " doRNG", "doParallel", "foreach", "dynamicTreeCut"))
+```
+
+# Install packages necessary for SCENIC
+```{r}
+# GENIE3 (or GRNBoost2):
+install.packages("http://bioconductor.org/packages/release/bioc/src/contrib/GENIE3_1.2.0.tar.gz", repos=NULL)
+# AUCell:
+install.packages("http://scenic.aertslab.org/downloads/Rpackages/AUCell_0.99.5.tar.gz", repos=NULL)
+# RcisTarget:
+install.packages("http://scenic.aertslab.org/downloads/Rpackages/RcisTarget_0.99.0.tar.gz", repos=NULL)
+# RCisTarget database
+# Human: install.packages("http://scenic.aertslab.org/downloads/databases/RcisTarget.hg19.motifDatabases.20k_0.1.1.tar.gz", repos=NULL)
+# Mouse: 
+install.packages("http://scenic.aertslab.org/downloads/databases/RcisTarget.mm9.motifDatabases.20k_0.1.1.tar.gz", repos=NULL)
+# Fly: install.packages("http://scenic.aertslab.org/downloads/databases/RcisTarget.dm6.motifDatabases.20k_0.2.1____.tar.gz", repos=NULL)
+#SCENIC
+devtools::install_github("aertslab/SCENIC", dep = FALSE)
+```
+
+# Create data, plots and tables folder
+```{r}
+dir.create("data")
+dir.create("plots")
+dir.create("tables")
+```
+
